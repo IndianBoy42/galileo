@@ -60,7 +60,8 @@ impl Map {
         &mut self.layers
     }
 
-    pub(crate) fn set_view(&mut self, view: MapView) {
+    /// Set the map view.
+    pub fn set_view(&mut self, view: MapView) {
         self.view = view;
         if let Some(messenger) = &self.messenger {
             messenger.request_redraw();
