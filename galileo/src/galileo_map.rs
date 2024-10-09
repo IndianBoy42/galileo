@@ -14,7 +14,7 @@ use std::sync::{Arc, RwLock};
 use winit::dpi::PhysicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
-use winit::window::{Window, WindowBuilder};
+use winit::window::{Window, WindowAttributes};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -173,12 +173,11 @@ impl MapBuilder {
         log::info!("Trying to get window");
 
         let window = self.window.take().unwrap_or_else(|| {
-            WindowBuilder::new()
-                .with_inner_size(PhysicalSize {
+            event_loop
+                .create_window(Window::default_attributes().with_inner_size(PhysicalSize {
                     width: 1024,
                     height: 1024,
-                })
-                .build(&event_loop)
+                }))
                 .expect("Failed to init a window.")
         });
 
