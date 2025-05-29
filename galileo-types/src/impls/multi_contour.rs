@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 use serde::{Deserialize, Serialize};
 
 use crate::geometry_type::{GeometryType, MultiContourGeometryType};
@@ -24,4 +26,17 @@ impl<P> From<Vec<Contour<P>>> for MultiContour<P> {
 impl<P: GeometryType> GeometryType for MultiContour<P> {
     type Type = MultiContourGeometryType;
     type Space = P::Space;
+}
+
+impl<P> Deref for MultiContour<P> {
+    type Target = Vec<Contour<P>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<P> DerefMut for MultiContour<P> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
