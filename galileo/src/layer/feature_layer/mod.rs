@@ -3,6 +3,7 @@
 use std::any::Any;
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::sync::Arc;
 
 use galileo_types::cartesian::{
     CartesianPoint2d, NewCartesianPoint2d, NewCartesianPoint3d, Point2, Point3, Rect,
@@ -57,6 +58,8 @@ where
     lods: Vec<Lod>,
     messenger: RwLock<Option<Box<dyn Messenger>>>,
     options: FeatureLayerOptions,
+
+    rendered_center: Arc<Mutex<Option<Point3>>>,
 
     space: PhantomData<Space>,
 }
@@ -128,6 +131,7 @@ where
             lods: vec![Lod::new(1.0, options.buffer_size_limit)],
             options,
             space: Default::default(),
+            rendered_center: Default::default(),
         }
     }
 
@@ -150,6 +154,7 @@ where
             lods,
             options,
             space: Default::default(),
+            rendered_center: Default::default(),
         }
     }
 
@@ -233,7 +238,16 @@ where
         let lod = self.select_lod(view.resolution());
         let mut store = lod.bundles.lock();
 
-        match store.required_update() {
+        let mut required_update = store.required_update();
+        let projcenter = view.projected_center().expect("Valid MapView");
+        match *self.rendered_center.lock() {
+            Some(center) if center != projcenter => {
+                required_update = UpdateType::All;
+            }
+            _ => {}
+        }
+        self.rendered_center.lock().replace(projcenter);
+        match required_update {
             UpdateType::All => {
                 for (id, feature) in self.features.iter() {
                     store.with_bundle(|bundle| {
