@@ -789,6 +789,7 @@ impl StrokeVertexConstructor<PolyVertex> for LineVertexConstructor<'_> {
                                         // Multiply by self.resolution to get world length.
                 // (dx * dx + dy * dy).sqrt() * 2.0 * self.resolution
                 f32::MAX
+                                        // FIXME: way too aggressive for small segments
             } else {
                 f32::MAX
             }

@@ -34,12 +34,7 @@ fn vs_main(
 
     var norm_length = sqrt(model.norm[0] * model.norm[0] + model.norm[1] * model.norm[1]) * transform.resolution;
 
-    var norm_limit = 1.0;
-    if (norm_length > model.norm_limit) {
-        norm_limit = model.norm_limit / norm_length;
-    }
-
-    let norm = model.norm * norm_limit * transform.resolution;
+    let norm = model.norm * transform.resolution;
     let vertex_position = transform.view_proj * vec4<f32>(model.position.xy + norm, model.position[2], 1.0);
 
     out.clip_position = vertex_position;
