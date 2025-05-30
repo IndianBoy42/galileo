@@ -787,7 +787,8 @@ impl StrokeVertexConstructor<PolyVertex> for LineVertexConstructor<'_> {
                                         // norm_limit should be in world units.
                                         // (dx*dx + dy*dy).sqrt() is length in (world-center)/res units.
                                         // Multiply by self.resolution to get world length.
-                (dx * dx + dy * dy).sqrt() * 2.0 * self.resolution
+                // (dx * dx + dy * dy).sqrt() * 2.0 * self.resolution
+                f32::MAX
             } else {
                 f32::MAX
             }
