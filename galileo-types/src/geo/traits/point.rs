@@ -123,6 +123,22 @@ pub trait GeoPointExt: GeoPoint {
 
         smin * a * (sigma - delta_sigma)
     }
+
+    // Implement these offset_* functions AI!
+    /// Add a offset defined in meters
+    fn offset(self, dx: f64, dy: f64) -> Self {
+        todo!()
+    }
+    /// Add an offset defined in meters, more accurate for a larger distance
+    fn offset_accurate(self, dx: f64, dy: f64, datum: &Datum) -> Self {
+        todo!()
+    }
+    fn offset_polar(self, distance: f64, heading: f64) -> Self {
+        todo!()
+    }
+    fn offset_polar_accurate(self, distance: f64, heading: f64, datum: &Datum) -> Self {
+        todo!()
+    }
 }
 
 impl<P: GeoPoint> GeoPointExt for P {}
