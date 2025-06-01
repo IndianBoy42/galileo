@@ -25,11 +25,18 @@ impl<Num> Point2<Num> {
     }
 
     /// Returns coordinates of the point as an array of `Num`.
-    pub fn coords(&self) -> [Num; 2]
+    pub fn array(&self) -> [Num; 2]
     where
         Num: Copy,
     {
         [self.x, self.y]
+    }
+
+    pub fn point3(&self, z: Num) -> Point3<Num>
+    where
+        Num: Copy,
+    {
+        Point3::new(self.x, self.y, z)
     }
 }
 
@@ -184,6 +191,13 @@ impl<Num> Point3<Num> {
 
     pub fn array(self) -> [Num; 3] {
         [self.x, self.y, self.z]
+    }
+
+    pub const fn point2(&self) -> Point2<Num>
+    where
+        Num: Copy,
+    {
+        Point2::new(self.x, self.y)
     }
 }
 

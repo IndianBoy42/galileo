@@ -56,6 +56,7 @@ pub struct ShapeArguments<'a> {
     outline: Option<LinePaint>,
     shape: &'a ClosedContour<Point2<f32>>,
     offset: Vector2<f32>,
+    rotation: f32,
 }
 
 impl Default for WorldRenderSet {
@@ -206,6 +207,7 @@ impl WorldRenderSet {
                     outline: *outline,
                     shape: &square_shape(),
                     offset: paint.offset,
+                    rotation: 0.0,
                 };
                 self.add_shape(point, shape, view);
             }
@@ -214,6 +216,7 @@ impl WorldRenderSet {
                 scale,
                 outline,
                 shape,
+                rotation,
             } => {
                 let shape = ShapeArguments {
                     fill: *fill,
@@ -221,6 +224,7 @@ impl WorldRenderSet {
                     outline: *outline,
                     shape,
                     offset: paint.offset,
+                    rotation: *rotation,
                 };
                 self.add_shape(point, shape, view);
             }
@@ -431,6 +435,7 @@ impl WorldRenderSet {
             outline,
             shape,
             offset,
+            rotation,
         } = shape;
         let view_center = view.projected_center().unwrap();
         let rel_anchor_x = position.x().as_() - view_center.x();
@@ -570,7 +575,7 @@ impl WorldRenderSet {
             vertices.push(PolyVertex::new(
                 [rel_anchor_x, rel_anchor_y, rel_anchor_z],
                 fill.side_color.to_f32_array(),
-                (*point + offset).coords(),
+                (*point + offset).array(),
                 f32::MAX,
             ));
         }
@@ -594,6 +599,7 @@ impl WorldRenderSet {
                 outline,
                 shape: &ClosedContour::new(contour),
                 offset,
+                rotation: 0.0,
             };
             self.add_shape(position, shape, view);
         }
@@ -788,9 +794,9 @@ impl StrokeVertexConstructor<PolyVertex> for LineVertexConstructor<'_> {
                                         // norm_limit should be in world units.
                                         // (dx*dx + dy*dy).sqrt() is length in (world-center)/res units.
                                         // Multiply by self.resolution to get world length.
-                // (dx * dx + dy * dy).sqrt() * 2.0 * self.resolution
+                                        // (dx * dx + dy * dy).sqrt() * 2.0 * self.resolution
                 f32::MAX
-                                        // FIXME: way too aggressive for small segments
+                // FIXME: way too aggressive for small segments
             } else {
                 f32::MAX
             }

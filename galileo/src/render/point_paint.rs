@@ -67,7 +67,12 @@ impl<'a> PointPaint<'a> {
     }
 
     /// Creates a paint that draws a given shape (in screen coordinates).
-    pub fn shape(color: Color, contour: &'a ClosedContour<Point2<f32>>, scale: f32) -> Self {
+    pub fn shape(
+        color: Color,
+        contour: &'a ClosedContour<Point2<f32>>,
+        scale: f32,
+        rotation: f32,
+    ) -> Self {
         Self {
             offset: Vector2::default(),
             shape: PointShape::FreeShape {
@@ -75,6 +80,7 @@ impl<'a> PointPaint<'a> {
                 scale,
                 outline: None,
                 shape: Cow::Borrowed(contour),
+                rotation,
             },
         }
     }
@@ -156,6 +162,7 @@ pub(crate) enum PointShape<'a> {
         scale: f32,
         outline: Option<LinePaint>,
         shape: Cow<'a, ClosedContour<Point2<f32>>>,
+        rotation: f32,
     },
     Label {
         text: Cow<'a, String>,

@@ -91,12 +91,28 @@ pub trait CartesianPoint3d {
 pub trait NewCartesianPoint2d<Num = f64>: CartesianPoint2d<Num = Num> {
     /// Creates a new point with the given coordinates.
     fn new(x: Num, y: Num) -> Self;
+
+    fn from_pt<T>(pt: &T) -> Self
+    where
+        T: CartesianPoint2d<Num = Num>,
+        Self: Sized,
+    {
+        Self::new(pt.x(), pt.y())
+    }
 }
 
 /// A 3d cartesian point that can be constructed from only the coordinates.
 pub trait NewCartesianPoint3d<Num = f64>: CartesianPoint3d<Num = Num> {
     /// Creates a new point with the given coordinates.
     fn new(x: Num, y: Num, z: Num) -> Self;
+
+    fn from_pt<T>(pt: &T) -> Self
+    where
+        T: CartesianPoint3d<Num = Num>,
+        Self: Sized,
+    {
+        Self::new(pt.x(), pt.y(), pt.z())
+    }
 }
 
 /// Methods that apply only when a point has float-type coordinates.

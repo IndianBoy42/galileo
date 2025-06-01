@@ -19,6 +19,22 @@ pub trait Projection {
     }
 }
 
+pub trait Project: Sized {
+    fn projected<P>(&self, projection: &P) -> Option<P::OutPoint>
+    where
+        P: Projection<InPoint = Self>,
+    {
+        projection.project(self)
+    }
+    fn unprojected<P>(&self, projection: &P) -> Option<P::InPoint>
+    where
+        P: Projection<OutPoint = Self>,
+    {
+        projection.unproject(self)
+    }
+}
+impl<T> Project for T {}
+
 /// Projection that does exactly opposite to what the base projection does.
 pub struct InvertedProjection<IN, OUT> {
     inner: Box<dyn Projection<InPoint = IN, OutPoint = OUT>>,

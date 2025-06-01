@@ -43,7 +43,7 @@ impl GeoPoint2d {
     }
 
     /// Add a offset defined in meters
-    fn offset(self, dx: f64, dy: f64) -> Self {
+    pub fn offset(self, dx: f64, dy: f64) -> Self {
         const EARTH_RADIUS: f64 = 6371008.8; // WGS84 mean radius in meters
 
         let delta_lat = dy / EARTH_RADIUS.to_degrees();
@@ -52,7 +52,7 @@ impl GeoPoint2d {
         Self::latlon(self.lat() + delta_lat, self.lon() + delta_lon)
     }
     /// Add an offset defined in meters, more accurate for a larger distance using datum parameters
-    fn offset_accurate(self, dx: f64, dy: f64, datum: &Datum) -> Self {
+    pub fn offset_accurate(self, dx: f64, dy: f64, datum: &Datum) -> Self {
         let distance = (dx.powi(2) + dy.powi(2)).sqrt();
         let azimuth = dy.atan2(dx).to_degrees();
 
@@ -113,7 +113,7 @@ impl GeoPoint2d {
     }
 
     /// Move point by distance (meters) in direction specified by heading (degrees clockwise from North)
-    fn offset_polar(self, distance: f64, heading: f64) -> Self {
+    pub fn offset_polar(self, distance: f64, heading: f64) -> Self {
         // TODO: direct method
         let heading_rad = heading.to_radians();
         let dx = distance * heading_rad.sin();
@@ -121,7 +121,7 @@ impl GeoPoint2d {
         self.offset(dx, dy)
     }
 
-    fn offset_polar_accurate(self, distance: f64, heading: f64, datum: &Datum) -> Self {
+    pub fn offset_polar_accurate(self, distance: f64, heading: f64, datum: &Datum) -> Self {
         // TODO: direct method
         let heading_rad = heading.to_radians();
         let dx = distance * heading_rad.sin();
