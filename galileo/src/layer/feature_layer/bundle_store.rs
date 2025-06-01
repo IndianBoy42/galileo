@@ -34,6 +34,20 @@ pub(super) enum UpdateType {
 }
 
 impl UpdateType {
+    pub fn upgrade(&mut self, other: UpdateType) {
+        match (&mut *self, other) {
+            (UpdateType::None, other) => {
+                *self = other;
+            }
+            (UpdateType::All, _) => {}
+            (_, UpdateType::None) => {}
+            (_, UpdateType::All) => {
+                *self = UpdateType::All;
+            }
+            (UpdateType::Selected(ids), UpdateType::Selected(other)) => ids.extend(other),
+        }
+    }
+
     fn update_all(&mut self) {
         *self = UpdateType::All;
     }

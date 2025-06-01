@@ -25,6 +25,7 @@ pub enum ProjectionType {
     WebMercator,
     /// `proj` or `geodesy` definition of the projection.
     Other(String),
+    // TODO: Other should be an interned string (impl Copy)
 }
 
 impl Crs {

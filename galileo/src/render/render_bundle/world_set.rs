@@ -754,8 +754,9 @@ impl StrokeVertexConstructor<PolyVertex> for LineVertexConstructor<'_> {
         // position_on_path() gives coordinates relative to the (0,0) of the path builder,
         // which were (world_coord - view_center_coord) / resolution.
         // So, multiplying by self.resolution gives (world_coord - view_center_coord).
-        let pos_x_relative_to_view_center = (vertex.position_on_path().x * self.resolution) as f64;
-        let pos_y_relative_to_view_center = (vertex.position_on_path().y * self.resolution) as f64;
+        let position = vertex.position_on_path();
+        let pos_x_relative_to_view_center = (position.x * self.resolution) as f64;
+        let pos_y_relative_to_view_center = (position.y * self.resolution) as f64;
 
         // Z coordinate was also made relative: (world_z - view_center_z)
         // It was passed as an attribute to Lyon, so interpolated_attributes()[0] contains this relative Z.
