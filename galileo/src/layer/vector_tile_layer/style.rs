@@ -152,6 +152,8 @@ pub struct VectorTileLineSymbol {
     pub width: f64,
     /// Color of the line in pixels.
     pub stroke_color: Color,
+    /// miter limit for the tesselation
+    pub miter_limit: f32,
 }
 
 impl From<VectorTileLineSymbol> for LinePaint {
@@ -161,6 +163,7 @@ impl From<VectorTileLineSymbol> for LinePaint {
             width: value.width,
             offset: 0.0,
             line_cap: LineCap::Butt,
+            miter_limit: value.miter_limit,
         }
     }
 }

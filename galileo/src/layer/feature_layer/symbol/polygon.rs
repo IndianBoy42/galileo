@@ -20,6 +20,8 @@ pub struct SimplePolygonSymbol {
     /// Offset of the outline in pixels. Positive offset will move outline outside of the polygon, negative offset
     /// will move the outline inside the polygon.
     pub stroke_offset: f64,
+    /// miter limit for the tesselation
+    pub miter_limit: f32,
 }
 
 impl SimplePolygonSymbol {
@@ -30,6 +32,7 @@ impl SimplePolygonSymbol {
             stroke_color: Default::default(),
             stroke_width: 0.0,
             stroke_offset: 0.0,
+            miter_limit: 1.0,
         }
     }
 
@@ -81,6 +84,7 @@ impl SimplePolygonSymbol {
                 width: self.stroke_width,
                 offset: self.stroke_offset,
                 line_cap: LineCap::Butt,
+                miter_limit: self.miter_limit,
             };
 
             for contour in polygon.iter_contours() {
@@ -101,9 +105,9 @@ impl<F> Symbol<F> for SimplePolygonSymbol {
     ) {
         match geometry {
             Geom::Polygon(poly) => self.render_poly(poly, min_resolution, bundle, view),
-            Geom::MultiPolygon(polygons) => polygons.polygons().for_each(|polygon| {
-                self.render_poly(polygon, min_resolution, bundle, view)
-            }),
+            Geom::MultiPolygon(polygons) => polygons
+                .polygons()
+                .for_each(|polygon| self.render_poly(polygon, min_resolution, bundle, view)),
             _ => {}
         }
     }

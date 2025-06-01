@@ -15,12 +15,18 @@ pub struct SimpleContourSymbol {
     pub color: Color,
     /// Width of the line in pixels.
     pub width: f64,
+    /// miter limit for the tesselation
+    pub miter_limit: f32,
 }
 
 impl SimpleContourSymbol {
     /// Creates a new instance.
     pub fn new(color: Color, width: f64) -> Self {
-        Self { color, width }
+        Self {
+            color,
+            width,
+            miter_limit: 1.0,
+        }
     }
 }
 
@@ -33,11 +39,13 @@ impl<F> Symbol<F> for SimpleContourSymbol {
         bundle: &mut RenderBundle,
         view: &MapView,
     ) {
+        // TODO: expose all this
         let paint = LinePaint {
             color: self.color,
             width: self.width,
             offset: 0.0,
             line_cap: LineCap::Butt,
+            miter_limit: self.miter_limit,
         };
 
         match geometry {

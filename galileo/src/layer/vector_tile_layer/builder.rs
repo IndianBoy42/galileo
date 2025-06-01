@@ -423,6 +423,7 @@ impl VectorTileLayerBuilder {
                 line: Some(VectorTileLineSymbol {
                     width: 1.0,
                     stroke_color: Color::BLACK,
+                    miter_limit: 4.0,
                 }),
                 polygon: Some(VectorTilePolygonSymbol {
                     fill_color: Color::GRAY,

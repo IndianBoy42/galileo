@@ -112,6 +112,7 @@ impl<'a> PointPaint<'a> {
                     width: width as f64,
                     offset: 0.0,
                     line_cap: LineCap::Round,
+                    miter_limit: 1.0,
                 })
             }
             _ => {}

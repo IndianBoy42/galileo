@@ -306,7 +306,7 @@ impl WorldRenderSet {
             &StrokeOptions::DEFAULT
                 .with_line_cap(paint.line_cap.into())
                 .with_line_width(paint.width as f32)
-                .with_miter_limit(1.0)
+                .with_miter_limit(paint.miter_limit)
                 .with_tolerance(0.1)
                 .with_line_join(LineJoin::MiterClip),
             &mut BuffersBuilder::new(tessellation, vertex_constructor),

@@ -91,6 +91,8 @@ pub struct LinePaint {
     pub offset: f64,
     /// Type of the cap of the line.
     pub line_cap: LineCap,
+    /// miter limit for the tesselation
+    pub miter_limit: f32,
 }
 
 /// Cap (end point) style of the line.
