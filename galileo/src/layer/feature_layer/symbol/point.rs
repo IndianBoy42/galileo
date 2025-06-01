@@ -2,8 +2,9 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use galileo_types::cartesian::{Point3, Vector2};
+use galileo_types::cartesian::{CartesianPoint3d as _, Point2, Point3, Vector2, Vector3};
 use galileo_types::geometry::Geom;
+use galileo_types::impls::ClosedContour;
 use galileo_types::MultiPoint;
 use image::EncodableLayout;
 
@@ -107,6 +108,106 @@ impl<F> Symbol<F> for OutlinedCirclePointSymbol {
     }
 }
 
+/// Renders a point as an outlined circle of fixed size.
+#[derive(Debug, Copy, Clone)]
+pub struct ArrowPointSymbol {
+    /// Color of the shape.
+    pub color: Color,
+    /// Diameter of the circle.
+    pub size: f64,
+    /// Width of the arrow
+    pub width: f32,
+    /// Length of the arrow
+    pub length: f32,
+}
+
+impl<F> Symbol<F> for ArrowPointSymbol {
+    fn render(
+        &self,
+        _feature: &F,
+        geometry: &Geom<Point3>,
+        min_resolution: f64,
+        bundle: &mut RenderBundle,
+        view: &MapView,
+    ) {
+        let circle = PointPaint::circle(self.color, self.size as f32);
+        match geometry {
+            &Geom::Point(point) => {
+                self.add_arrow_shape(min_resolution, bundle, view, point, self.width, self.length);
+                let point = Point3::new(point.x(), point.y(), 0.0);
+                bundle.add_point(&point, &circle, min_resolution, view);
+            }
+            Geom::MultiPoint(points) => {
+                points.iter_points().for_each(|&point| {
+                    self.add_arrow_shape(
+                        min_resolution,
+                        bundle,
+                        view,
+                        point,
+                        self.width,
+                        self.length,
+                    );
+                    let point = Point3::new(point.x(), point.y(), 0.0);
+                    bundle.add_point(&point, &circle, min_resolution, view);
+                });
+            }
+            // TODO: use contour or something to specify width and length
+            _ => {}
+        }
+    }
+}
+
+impl ArrowPointSymbol {
+    pub fn new(color: Color, size: f64, width: f32, length: f32) -> Self {
+        Self {
+            color,
+            size,
+            width,
+            length,
+        }
+    }
+
+    fn add_arrow_shape(
+        &self,
+        min_resolution: f64,
+        bundle: &mut RenderBundle,
+        view: &MapView,
+        point: Point3,
+        width: f32,
+        length: f32,
+    ) {
+        let heading = point.z() as f32 * (std::f32::consts::PI / 180.);
+        let point = Point3::new(point.x(), point.y(), 0.0);
+        const HEAD_LEN: f32 = 0.5;
+        const HEAD_WID: f32 = 0.33;
+        let cntr = Point2::<f32>::new(0.0, 0.0);
+        let perp = Vector2::<f32>::new(-width * heading.cos(), width * heading.sin());
+        let dir = Vector2::<f32>::new(heading.sin() * length, heading.cos() * length);
+        let tip = cntr + dir;
+        let head = cntr + dir * HEAD_LEN;
+        bundle.add_point(
+            &point,
+            &PointPaint::shape(
+                self.color,
+                &ClosedContour {
+                    points: vec![
+                        cntr,
+                        (head + perp * HEAD_WID),
+                        head + perp,
+                        tip,
+                        head - perp,
+                        (head - perp * HEAD_WID),
+                        cntr,
+                    ],
+                },
+                1.,
+                heading,
+            ),
+            min_resolution,
+            view,
+        );
+    }
+}
 /// Symbol that renders a point with an image. The image size is fixed on the screen and does not depend on map
 /// resolution.
 pub struct ImagePointSymbol {
