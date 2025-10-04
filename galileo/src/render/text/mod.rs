@@ -13,9 +13,6 @@ pub(crate) use text_service::TextService;
 
 use crate::render::text::text_service::FontServiceError;
 
-// #[cfg(feature = "cosmic-text")]
-// mod cosmic_text;
-
 #[cfg(feature = "rustybuzz")]
 mod rustybuzz;
 #[cfg(feature = "rustybuzz")]
@@ -122,6 +119,7 @@ pub trait TextRasterizer {
         style: &TextStyle,
         offset: Vector2<f32>,
         font_provider: &dyn FontProvider,
+        dpi_scale_factor: f32,
     ) -> Result<TextShaping, FontServiceError>;
 }
 

@@ -48,7 +48,7 @@ impl<F> Symbol<F> for CirclePointSymbol {
             }
             Geom::MultiPoint(points) => {
                 points.iter_points().for_each(|p| {
-                    bundle.add_point(p, &paint, min_resolution, view);
+                    bundle.add_point(&p, &paint, min_resolution, view);
                 });
             }
             _ => {}
@@ -99,8 +99,8 @@ impl<F> Symbol<F> for OutlinedCirclePointSymbol {
             }
             Geom::MultiPoint(points) => {
                 points.iter_points().for_each(|p| {
-                    bundle.add_point(p, &outer, min_resolution, view);
-                    bundle.add_point(p, &inner, min_resolution, view);
+                    bundle.add_point(&p, &outer, min_resolution, view);
+                    bundle.add_point(&p, &inner, min_resolution, view);
                 });
             }
             _ => {}
@@ -138,7 +138,7 @@ impl<F> Symbol<F> for ArrowPointSymbol {
                 bundle.add_point(&point, &circle, min_resolution, view);
             }
             Geom::MultiPoint(points) => {
-                points.iter_points().for_each(|&point| {
+                points.iter_points().for_each(|point| {
                     self.add_arrow_shape(
                         min_resolution,
                         bundle,
@@ -279,7 +279,7 @@ impl<F> Symbol<F> for ImagePointSymbol {
         match geometry {
             Geom::Point(point) => add_marker(point, bundle, view),
             Geom::MultiPoint(points) => points.iter_points().for_each(|point| {
-                add_marker(point, bundle, view);
+                add_marker(&point, bundle, view);
             }),
             _ => {}
         }

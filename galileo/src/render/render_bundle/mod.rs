@@ -1,5 +1,7 @@
 //! [`RenderBundle`] is used to store primitives and prepare them for rendering with the rendering backend.
 
+use std::sync::Arc;
+
 use galileo_types::cartesian::{CartesianPoint3d, Point2, Vector2};
 use galileo_types::contour::Contour;
 use galileo_types::Polygon;
@@ -26,15 +28,32 @@ pub struct RenderBundle {
 }
 
 impl RenderBundle {
+    /// Creates a new render bundle with the given DPI scale factor.
+    pub fn new(dpi_scale_factor: f32) -> Self {
+        Self {
+            world_set: WorldRenderSet::new(dpi_scale_factor),
+            screen_sets: Vec::new(),
+        }
+    }
+
     /// Adds an image to the bundle.
     pub fn add_image(
+        &mut self,
+        image: Arc<DecodedImage>,
+        vertices: [Point2; 4],
+        paint: ImagePaint,
+    ) {
+        self.world_set.add_image(image, vertices, paint);
+    }
+
+    /// Adds an image to the bundle.
+    pub fn add_image_owned(
         &mut self,
         image: DecodedImage,
         vertices: [Point2; 4],
         paint: ImagePaint,
-        view: &MapView,
     ) {
-        self.world_set.add_image(image, vertices, paint, view);
+        self.world_set.add_image_owned(image, vertices, paint);
     }
 
     /// Adds a point to the bundle.

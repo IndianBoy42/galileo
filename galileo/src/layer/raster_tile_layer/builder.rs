@@ -2,10 +2,12 @@ use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
 
-use super::{RasterTileLayer, RasterTileProvider, RestTileProvider};
+use super::{RasterTileLayer, RasterTileLoader, RestTileLoader};
 use crate::error::GalileoError;
 use crate::layer::attribution::Attribution;
-use crate::layer::data_provider::{FileCacheController, PersistentCacheController, UrlSource};
+use crate::layer::data_provider::{
+    FileCacheController, FileCachePathModifier, PersistentCacheController, UrlSource,
+};
 use crate::tile_schema::TileIndex;
 use crate::{Messenger, TileSchema};
 
@@ -26,7 +28,7 @@ use crate::{Messenger, TileSchema};
 /// # Ok::<(), galileo::error::GalileoError>(())
 /// ```
 pub struct RasterTileLayerBuilder {
-    provider_type: ProviderType,
+    loader_type: LoaderType,
     tile_schema: Option<TileSchema>,
     messenger: Option<Box<dyn Messenger>>,
     cache: CacheType,
@@ -34,14 +36,14 @@ pub struct RasterTileLayerBuilder {
     attribution: Option<Attribution>,
 }
 
-enum ProviderType {
+enum LoaderType {
     Rest(Box<dyn UrlSource<TileIndex>>),
-    Custom(Box<dyn RasterTileProvider>),
+    Custom(Box<dyn RasterTileLoader>),
 }
 
 enum CacheType {
     None,
-    File(PathBuf),
+    File(PathBuf, Option<Box<FileCachePathModifier>>),
     Custom(Box<dyn PersistentCacheController<str, Bytes>>),
 }
 
@@ -62,7 +64,7 @@ impl RasterTileLayerBuilder {
     /// ```
     pub fn new_rest(tile_source: impl UrlSource<TileIndex> + 'static) -> Self {
         Self {
-            provider_type: ProviderType::Rest(Box::new(tile_source)),
+            loader_type: LoaderType::Rest(Box::new(tile_source)),
             tile_schema: None,
             messenger: None,
             cache: CacheType::None,
@@ -85,7 +87,7 @@ impl RasterTileLayerBuilder {
     /// ```
     pub fn new_osm() -> Self {
         Self {
-            provider_type: ProviderType::Rest(Box::new(|index| {
+            loader_type: LoaderType::Rest(Box::new(|index| {
                 format!(
                     "https://tile.openstreetmap.org/{}/{}/{}.png",
                     index.z, index.x, index.y
@@ -102,12 +104,12 @@ impl RasterTileLayerBuilder {
         }
     }
 
-    /// Initializes a builder for a lyer with the given tile provider.
+    /// Initializes a builder for a layer with the given tile loader.
     ///
     /// ```
-    /// use galileo::layer::raster_tile_layer::{RestTileProvider, RasterTileLayerBuilder};
+    /// use galileo::layer::raster_tile_layer::{RestTileLoader, RasterTileLayerBuilder};
     ///
-    /// let provider = RestTileProvider::new(
+    /// let loader = RestTileLoader::new(
     ///     |index| {
     ///         format!(
     ///             "https://tile.openstreetmap.org/{}/{}/{}.png",
@@ -117,13 +119,13 @@ impl RasterTileLayerBuilder {
     ///     None,
     ///     false,
     /// );
-    /// let layer = RasterTileLayerBuilder::new_with_provider(provider)
+    /// let layer = RasterTileLayerBuilder::new_with_loader(loader)
     ///     .build()?;
     /// # Ok::<(), galileo::error::GalileoError>(())
     /// ```
-    pub fn new_with_provider(provider: impl RasterTileProvider + 'static) -> Self {
+    pub fn new_with_loader(loader: impl RasterTileLoader + 'static) -> Self {
         Self {
-            provider_type: ProviderType::Custom(Box::new(provider)),
+            loader_type: LoaderType::Custom(Box::new(loader)),
             tile_schema: None,
             messenger: None,
             cache: CacheType::None,
@@ -141,7 +143,7 @@ impl RasterTileLayerBuilder {
     /// fails, building the tile layer will return an error.
     ///
     /// Cannot be used with custom tile provider given by
-    /// [`RasterTileLayerBuilder::new_with_provider()`] method as the provider must have already be
+    /// [`RasterTileLayerBuilder::new_with_loader()`] method as the provider must have already be
     /// created with the cache configured. So in this case building will also return an error.
     ///
     /// Replaces the value set by the [`RasterTileLayerBuilder::with_cache_controller()`] method.
@@ -173,7 +175,41 @@ impl RasterTileLayerBuilder {
         // and there is no simple way to detect if there is for the current target. So I'd rather
         // have both methods for future, when we want to add support for more platforms or have a
         // better way to check if the FS operations are available on the current target.
-        self.cache = CacheType::File(path.as_ref().into());
+        self.cache = CacheType::File(path.as_ref().into(), None);
+        self
+    }
+
+    /// Same as [`with_file_cache`], but also modifies the file path by given `modifier` function
+    ///
+    /// ```
+    /// use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
+    ///
+    /// let layer = RasterTileLayerBuilder::new_rest(
+    ///     |index| {
+    ///         format!(
+    ///             "https://tile.openstreetmap.org/{}/{}/{}.png",
+    ///             index.z, index.x, index.y
+    ///         )
+    ///     })
+    ///     .with_file_cache_modifier(
+    ///         "./target",
+    ///         // modify file path to be `uppercase`
+    ///         Box::new(|path| path.to_uppercase())
+    ///     )
+    ///     .build()?;
+    /// # Ok::<(), galileo::error::GalileoError>(())
+    /// ```
+    pub fn with_file_cache_modifier(
+        mut self,
+        path: impl AsRef<Path>,
+        modifier: Box<FileCachePathModifier>,
+    ) -> Self {
+        // You would think that we don't need `with_file_cache_modifier_checked` method and can move its
+        // logic here instead. But actually not all `wasm32` platforms don't have access to the FS,
+        // and there is no simple way to detect if there is for the current target. So I'd rather
+        // have both methods for future, when we want to add support for more platforms or have a
+        // better way to check if the FS operations are available on the current target.
+        self.cache = CacheType::File(path.as_ref().into(), Some(modifier));
         self
     }
 
@@ -205,10 +241,44 @@ impl RasterTileLayerBuilder {
         this
     }
 
+    /// Same as [`with_file_cache_checked`], but also modifies the file path by given `modifier` function
+    ///
+    /// ```
+    /// use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
+    ///
+    /// let layer = RasterTileLayerBuilder::new_rest(
+    ///     |index| {
+    ///         format!(
+    ///             "https://tile.openstreetmap.org/{}/{}/{}.png",
+    ///             index.z, index.x, index.y
+    ///         )
+    ///     })
+    ///     .with_file_cache_modifier_checked(
+    ///         "./target",
+    ///         // modify file path to be `uppercase`
+    ///         Box::new(|path| path.to_uppercase())
+    ///     )
+    ///     .build()?;
+    /// # Ok::<(), galileo::error::GalileoError>(())
+    /// ```
+    pub fn with_file_cache_modifier_checked(
+        self,
+        _path: impl AsRef<Path>,
+        _modifier: Box<FileCachePathModifier>,
+    ) -> Self {
+        #[allow(unused_mut)]
+        let mut this = self;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            this = this.with_file_cache_modifier(_path, _modifier);
+        }
+        this
+    }
+
     /// Adds the given persistent cache for the tiles.
     ///
     /// Cannot be used with custom tile provider given by
-    /// [`RasterTileLayerBuilder::new_with_provider()`] method as the provider must have already be
+    /// [`RasterTileLayerBuilder::new_with_loader()`] method as the provider must have already be
     /// created with the cache configured. So in this case building will also return an error.
     ///
     /// Replaces the value set by the [`RasterTileLayerBuilder::with_file_cache()`] method.
@@ -217,7 +287,7 @@ impl RasterTileLayerBuilder {
     /// use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
     /// use galileo::layer::data_provider::FileCacheController;
     ///
-    /// let cache_controller = FileCacheController::new("target")?;
+    /// let cache_controller = FileCacheController::new("target", None)?;
     /// let layer = RasterTileLayerBuilder::new_rest(
     ///     |index| {
     ///         format!(
@@ -243,7 +313,7 @@ impl RasterTileLayerBuilder {
     /// to identify tiles in the cache.
     ///
     /// Cannot be used with custom tile provider given by
-    /// [`RasterTileLayerBuilder::new_with_provider()`] method as the provider must have already be
+    /// [`RasterTileLayerBuilder::new_with_loader()`] method as the provider must have already be
     /// created with the offline mode. So in this case building will also return an error.
     ///
     /// If the layer is set to offline mode but there is no cache configured, building it will
@@ -325,7 +395,7 @@ impl RasterTileLayerBuilder {
     /// fails to initialize.
     pub fn build(self) -> Result<RasterTileLayer, GalileoError> {
         let Self {
-            provider_type,
+            loader_type: provider_type,
             tile_schema,
             messenger,
             cache,
@@ -337,7 +407,9 @@ impl RasterTileLayerBuilder {
 
         let cache_controller: Option<Box<dyn PersistentCacheController<str, Bytes>>> = match cache {
             CacheType::None => None,
-            CacheType::File(path_buf) => Some(Box::new(FileCacheController::new(&path_buf)?)),
+            CacheType::File(path_buf, modifier) => {
+                Some(Box::new(FileCacheController::new(&path_buf, modifier)?))
+            }
             CacheType::Custom(persistent_cache_controller) => Some(persistent_cache_controller),
         };
 
@@ -347,13 +419,13 @@ impl RasterTileLayerBuilder {
             ));
         }
 
-        let provider: Box<dyn RasterTileProvider> = match provider_type {
-            ProviderType::Rest(url_source) => Box::new(RestTileProvider::new(
+        let provider: Box<dyn RasterTileLoader> = match provider_type {
+            LoaderType::Rest(url_source) => Box::new(RestTileLoader::new(
                 url_source,
                 cache_controller,
                 offline_mode,
             )),
-            ProviderType::Custom(raster_tile_provider) => {
+            LoaderType::Custom(raster_tile_provider) => {
                 if cache_controller.is_some() {
                     return Err(GalileoError::Configuration(
                         "custom tile provider cannot be used together with a cache controller"
@@ -382,12 +454,12 @@ mod tests {
 
     #[test]
     fn with_file_cache_replaces_cache_controller() {
-        let cache = FileCacheController::new("target").unwrap();
+        let cache = FileCacheController::new("target", None).unwrap();
         let builder = RasterTileLayerBuilder::new_rest(|_| unimplemented!())
             .with_cache_controller(cache)
             .with_file_cache("target");
 
-        assert!(matches!(builder.cache, CacheType::File(_)));
+        assert!(matches!(builder.cache, CacheType::File(_, None)));
     }
 
     #[test]
@@ -402,8 +474,8 @@ mod tests {
 
     #[test]
     fn with_file_cache_fails_build_if_custom_provider() {
-        let provider = RestTileProvider::new(|_| unimplemented!(), None, false);
-        let result = RasterTileLayerBuilder::new_with_provider(provider)
+        let provider = RestTileLoader::new(|_| unimplemented!(), None, false);
+        let result = RasterTileLayerBuilder::new_with_loader(provider)
             .with_file_cache("target")
             .build();
 
@@ -413,7 +485,7 @@ mod tests {
 
     #[test]
     fn with_cache_controller_replaces_file_cache() {
-        let cache = FileCacheController::new("target").unwrap();
+        let cache = FileCacheController::new("target", None).unwrap();
         let builder = RasterTileLayerBuilder::new_rest(|_| unimplemented!())
             .with_file_cache("target")
             .with_cache_controller(cache);
@@ -423,9 +495,9 @@ mod tests {
 
     #[test]
     fn with_cache_controller_fails_build_if_custom_provider() {
-        let provider = RestTileProvider::new(|_| unimplemented!(), None, false);
-        let cache = FileCacheController::new("target").unwrap();
-        let result = RasterTileLayerBuilder::new_with_provider(provider)
+        let provider = RestTileLoader::new(|_| unimplemented!(), None, false);
+        let cache = FileCacheController::new("target", None).unwrap();
+        let result = RasterTileLayerBuilder::new_with_loader(provider)
             .with_cache_controller(cache)
             .build();
 
@@ -435,8 +507,8 @@ mod tests {
 
     #[test]
     fn with_offline_mode_incompatible_with_custom_provider() {
-        let provider = RestTileProvider::new(|_| unimplemented!(), None, false);
-        let result = RasterTileLayerBuilder::new_with_provider(provider)
+        let provider = RestTileLoader::new(|_| unimplemented!(), None, false);
+        let result = RasterTileLayerBuilder::new_with_loader(provider)
             .with_file_cache("target")
             .with_offline_mode()
             .build();

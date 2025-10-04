@@ -4,7 +4,7 @@ use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
 use super::FeatureId;
 use crate::render::render_bundle::RenderBundle;
-use crate::render::{Canvas, PackedBundle};
+use crate::render::{BundleToDraw, Canvas, PackedBundle};
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub(super) struct BundleId(u64);
@@ -90,8 +90,11 @@ impl BundleStore {
         self.required_update.updated();
     }
 
-    pub(super) fn packed(&self) -> Vec<&dyn PackedBundle> {
-        self.packed.values().map(|v| &**v).collect()
+    pub(super) fn packed(&self) -> Vec<BundleToDraw<'_>> {
+        self.packed
+            .values()
+            .map(|v| BundleToDraw::with_opacity(&**v, 1.0))
+            .collect()
     }
 
     pub(super) fn set_bundle_size_limit(&mut self, limit: usize) {
@@ -105,9 +108,13 @@ impl BundleStore {
         self.required_update.update_all();
     }
 
-    pub(super) fn with_bundle(&mut self, predicate: impl FnOnce(&mut RenderBundle) -> FeatureId) {
+    pub(super) fn with_bundle(
+        &mut self,
+        predicate: impl FnOnce(&mut RenderBundle) -> FeatureId,
+        dpi_scale_factor: f32,
+    ) {
         let (bundle_id, curr_bundle) = {
-            let v = self.curr_bundle();
+            let v = self.curr_bundle(dpi_scale_factor);
             (v.0, &mut v.1)
         };
 
@@ -118,10 +125,11 @@ impl BundleStore {
         self.feature_to_bundle_map.insert(feature_id, bundle_id);
     }
 
-    fn curr_bundle(&mut self) -> &mut (BundleId, RenderBundle) {
+    fn curr_bundle(&mut self, dpi_scale_factor: f32) -> &mut (BundleId, RenderBundle) {
         if self.last_bundle_is_full() {
             let new_id = BundleId::next();
-            self.unpacked.push((new_id, RenderBundle::default()));
+            self.unpacked
+                .push((new_id, RenderBundle::new(dpi_scale_factor)));
         }
 
         let idx = self.unpacked.len() - 1;

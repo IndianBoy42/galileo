@@ -43,7 +43,12 @@ impl TextRasterizer for RustybuzzRasterizer {
         style: &TextStyle,
         offset: Vector2<f32>,
         font_provider: &dyn FontProvider,
+        dpi_scale_factor: f32,
     ) -> Result<TextShaping, FontServiceError> {
+        if text.is_empty() {
+            return Ok(TextShaping::Tessellation { glyphs: vec![] });
+        }
+
         let mut buffer = UnicodeBuffer::new();
         buffer.push_str(text);
         buffer.guess_segment_properties();
@@ -59,7 +64,7 @@ impl TextRasterizer for RustybuzzRasterizer {
         face.set_variation(Tag::from_bytes(b"wdth"), 1.0);
 
         let units = face.units_per_em() as f32;
-        let scale = style.font_size / units;
+        let scale = style.font_size / units * dpi_scale_factor;
 
         let is_vertical = matches!(
             buffer.direction(),

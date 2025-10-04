@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use eframe::CreationContext;
 use egui::FontDefinitions;
 use galileo::control::{EventPropagation, MouseButton, UserEvent, UserEventHandler};
+use galileo::layer::data_provider::remove_parameters_modifier;
 use galileo::layer::vector_tile_layer::style::VectorTileStyle;
 use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
 use galileo::layer::VectorTileLayer;
@@ -49,12 +49,7 @@ impl eframe::App for App {
 }
 
 impl App {
-    fn new(
-        map: Map,
-        layer: Arc<RwLock<VectorTileLayer>>,
-        cc: &CreationContext,
-        handler: impl UserEventHandler + 'static,
-    ) -> Self {
+    fn new(egui_map_state: EguiMapState, layer: Arc<RwLock<VectorTileLayer>>) -> Self {
         let fonts = FontDefinitions::default();
         let provider = RustybuzzRasterizer::default();
 
@@ -64,12 +59,7 @@ impl App {
         }
 
         Self {
-            map: EguiMapState::new(
-                map,
-                cc.egui_ctx.clone(),
-                cc.wgpu_render_state.clone().expect("no render state"),
-                [Box::new(handler) as Box<dyn UserEventHandler>],
-            ),
+            map: egui_map_state,
             layer,
         }
     }
@@ -99,7 +89,7 @@ pub(crate) fn run() {
     })
     .with_style(style)
     .with_tile_schema(tile_schema())
-    .with_file_cache_checked(".tile_cache")
+    .with_file_cache_modifier_checked(".tile_cache", Box::new(remove_parameters_modifier))
     .with_attribution(
         "© MapTiler© OpenStreetMap contributors".to_string(),
         "https://www.maptiler.com/copyright/".to_string(),
@@ -130,10 +120,11 @@ pub(crate) fn run() {
     };
 
     let map = MapBuilder::default().with_layer(layer.clone()).build();
-    galileo_egui::init_with_app(Box::new(|cc| {
-        Ok(Box::new(App::new(map, layer, cc, handler)))
-    }))
-    .expect("failed to initialize");
+    galileo_egui::InitBuilder::new(map)
+        .with_handlers([Box::new(handler) as Box<dyn UserEventHandler>])
+        .with_app_builder(|egui_map_state, _| Box::new(App::new(egui_map_state, layer)))
+        .init()
+        .expect("failed to initialize");
 }
 
 fn default_style() -> VectorTileStyle {
@@ -144,29 +135,35 @@ fn gray_style() -> VectorTileStyle {
     let style_str = r##"
 {
   "rules": [
-  ],
-  "background": "#ffffffff",
-  "default_symbol": {
-    "line": {
-      "stroke_color": "#000000ff",
-      "width": 0.5
+    {
+      "symbol": {
+        "line": {
+          "stroke_color": "#000000ff",
+          "width": 0.5
+        }
+      }
     },
-    "polygon": {
-      "fill_color": "#999999ff"
+    {
+      "symbol": {
+        "polygon": {
+          "fill_color": "#999999ff"
+        }
+      }
     }
-  }
+  ],
+  "background": "#ffffffff"
 }"##;
     serde_json::from_str(style_str).expect("invalid style json")
 }
 
 fn tile_schema() -> TileSchema {
     const ORIGIN: Point2 = Point2::new(-20037508.342787, 20037508.342787);
-    const TOP_RESOLUTION: f64 = 156543.03392800014 / 4.0;
+    const TOP_RESOLUTION: f64 = 156543.03392800014 / 16.0;
 
-    let mut lods = vec![Lod::new(TOP_RESOLUTION, 0).expect("invalid config")];
-    for i in 1..16 {
+    let mut lods = vec![Lod::new(TOP_RESOLUTION, 2).expect("invalid config")];
+    for i in 3..16 {
         lods.push(
-            Lod::new(lods[(i - 1) as usize].resolution() / 2.0, i).expect("invalid tile schema"),
+            Lod::new(lods[(i - 3) as usize].resolution() / 2.0, i).expect("invalid tile schema"),
         );
     }
 

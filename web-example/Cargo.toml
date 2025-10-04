@@ -6,6 +6,7 @@ authors.workspace = true
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
+description = "Browser examples for Galileo"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -39,6 +40,8 @@ num-traits = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, optional = true }
-# Fix the version of uuid to prevent build breaking
-uuid = { workspace = true }
 wasm-bindgen = { workspace = true }
+
+# Specify dependency features specific for wasm target
+getrandom = { workspace = true, features = ["wasm_js"] }
+uuid = { workspace = true, features = ["js"] }

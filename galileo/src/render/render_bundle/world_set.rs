@@ -33,6 +33,7 @@ pub(crate) struct WorldRenderSet {
     pub clip_area: Option<VertexBuffers<PolyVertex, u32>>,
     pub image_store: Vec<Arc<DecodedImage>>,
     pub buffer_size: usize,
+    dpi_scale_factor: f32,
 }
 
 #[repr(C)]
@@ -61,12 +62,12 @@ pub struct ShapeArguments<'a> {
 
 impl Default for WorldRenderSet {
     fn default() -> Self {
-        Self::new()
+        Self::new(1.0)
     }
 }
 
 impl WorldRenderSet {
-    pub fn new() -> Self {
+    pub fn new(dpi_scale_factor: f32) -> Self {
         Self {
             poly_tessellation: VertexBuffers::new(),
             points: Vec::new(),
@@ -74,6 +75,7 @@ impl WorldRenderSet {
             clip_area: None,
             image_store: Vec::new(),
             buffer_size: 0,
+            dpi_scale_factor,
         }
     }
 
@@ -105,23 +107,30 @@ impl WorldRenderSet {
         self.clip_area = Some(tessellation);
     }
 
-    pub fn add_image(
+    pub fn add_image_owned(
         &mut self,
         image: DecodedImage,
         vertices: [Point2; 4],
         paint: ImagePaint,
-        view: &MapView,
+    ) {
+        self.add_image(Arc::new(image), vertices, paint)
+    }
+
+    pub fn add_image(
+        &mut self,
+        image: Arc<DecodedImage>,
+        vertices: [Point2; 4],
+        paint: ImagePaint,
     ) {
         let opacity = paint.opacity as f32 / 255.0;
 
         self.buffer_size += image.byte_size() + std::mem::size_of::<ImageVertex>() * 4;
 
-        let index = self.add_image_to_store(Arc::new(image), view);
+        let index = self.add_image_to_store(image);
 
-        // let [cx, cy, _] = view.projected_center().expect("Invalid MapView").array();
         let [cx, cy] = [0.0, 0.0];
 
-        let relative_vertices = [
+        let vertices = [
             ImageVertex {
                 position: [(vertices[0].x() - cx) as f32, (vertices[0].y() - cy) as f32],
                 opacity,
@@ -148,24 +157,13 @@ impl WorldRenderSet {
             },
         ];
 
-        self.add_image_info(index, relative_vertices, view);
-    }
-
-    fn add_image_info(
-        &mut self,
-        image_store_index: usize,
-        vertices: [ImageVertex; 4],
-        view: &MapView,
-    ) -> usize {
-        let index = self.images.len();
         self.images.push(ImageInfo {
-            store_index: image_store_index,
+            store_index: index,
             vertices,
         });
-        index
     }
 
-    fn add_image_to_store(&mut self, image: Arc<DecodedImage>, view: &MapView) -> usize {
+    fn add_image_to_store(&mut self, image: Arc<DecodedImage>) -> usize {
         for (i, stored) in self.image_store.iter().enumerate() {
             if Arc::ptr_eq(stored, &image) {
                 return i;
@@ -267,7 +265,7 @@ impl WorldRenderSet {
             return;
         };
 
-        let view_center = view.projected_center().unwrap();
+        let view_center = view.projected_position().unwrap();
         let cx = view_center.x();
         let cy = view_center.y();
         let cz = view_center.z(); // Assuming Z=0 if not otherwise set
@@ -294,7 +292,7 @@ impl WorldRenderSet {
         let path = path_builder.build();
 
         let vertex_constructor = LineVertexConstructor {
-            width: paint.width as f32,
+            width: paint.width as f32 * self.dpi_scale_factor,
             offset: paint.offset as f32,
             color: paint.color.to_f32_array(),
             resolution: min_resolution as f32,
@@ -378,7 +376,7 @@ impl WorldRenderSet {
     {
         // Use the MapView's projected center as the reference for relative coordinates
         // Get the first point to use as a fallback if view center is not available (though it should be)
-        let view_center = view.projected_center().unwrap();
+        let view_center = view.projected_position().unwrap();
         let v_cx = view_center.x();
         let v_cy = view_center.y();
         let v_cz = view_center.z();
@@ -437,7 +435,7 @@ impl WorldRenderSet {
             offset,
             rotation,
         } = shape;
-        let view_center = view.projected_center().unwrap();
+        let view_center = view.projected_position().unwrap();
         let rel_anchor_x = position.x().as_() - view_center.x();
         let rel_anchor_y = position.y().as_() - view_center.y();
         let rel_anchor_z = position.z().as_() - view_center.z();
@@ -448,7 +446,7 @@ impl WorldRenderSet {
         ];
 
         let mut path_builder = BuilderWithAttributes::new(0);
-        build_contour_path(&mut path_builder, shape, scale);
+        build_contour_path(&mut path_builder, shape, scale * self.dpi_scale_factor);
         let path = path_builder.build();
 
         let start_vertex_count = self.poly_tessellation.vertices.len();
@@ -531,7 +529,7 @@ impl WorldRenderSet {
         N: AsPrimitive<f64>,
         P: CartesianPoint3d<Num = N>,
     {
-        let view_center = view.projected_center().unwrap();
+        let view_center = view.projected_position().unwrap();
         let rel_anchor_x = position.x().as_() - view_center.x();
         let rel_anchor_y = position.y().as_() - view_center.y();
         let rel_anchor_z = position.z().as_() - view_center.z();
@@ -557,7 +555,7 @@ impl WorldRenderSet {
 
         let is_full_circle = (dr - std::f32::consts::PI * 2.0).abs() < TOLERANCE;
 
-        let mut contour = get_circle_sector(radius, start_angle, end_angle);
+        let mut contour = get_circle_sector(radius * self.dpi_scale_factor, start_angle, end_angle);
         let first_index = self.poly_tessellation.vertices.len() as u32;
 
         let start_vertex_count = self.poly_tessellation.vertices.len();
@@ -589,14 +587,14 @@ impl WorldRenderSet {
         self.poly_tessellation.vertices.append(&mut vertices);
         self.poly_tessellation.indices.append(&mut indices);
 
-        if outline.is_some() {
+        if let Some(outline) = outline {
             if !is_full_circle {
                 contour.push(Point2::new(0.0, 0.0));
             }
             let shape = ShapeArguments {
                 fill: Color::TRANSPARENT,
                 scale: radius,
-                outline,
+                outline: Some(outline),
                 shape: &ClosedContour::new(contour),
                 offset,
                 rotation: 0.0,
@@ -615,7 +613,7 @@ impl WorldRenderSet {
         N: AsPrimitive<f64>,
         P: CartesianPoint3d<Num = N>,
     {
-        let view_center = view.projected_center().unwrap();
+        let view_center = view.projected_position().unwrap();
         let vc_x = view_center.x();
         let vc_y = view_center.y();
         let vc_z = view_center.z();
@@ -647,12 +645,12 @@ impl WorldRenderSet {
         N: AsPrimitive<f64>,
         P: CartesianPoint3d<Num = N>,
     {
-        let view_center = view.projected_center().unwrap();
+        let view_center = view.projected_position().unwrap();
         let rel_anchor_x = position.x().as_() - view_center.x();
         let rel_anchor_y = position.y().as_() - view_center.y();
         let rel_anchor_z = position.z().as_() - view_center.z();
 
-        match TextService::shape(text, style, offset) {
+        match TextService::shape(text, style, offset, self.dpi_scale_factor) {
             Ok(TextShaping::Tessellation { glyphs, .. }) => {
                 for glyph in glyphs {
                     let vertices_start = self.poly_tessellation.vertices.len() as u32;

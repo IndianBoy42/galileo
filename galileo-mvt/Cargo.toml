@@ -21,9 +21,15 @@ geozero = { workspace = true, features = ["with-mvt"] }
 log = { workspace = true }
 nalgebra = { workspace = true, features = ["serde-serialize"] }
 prost = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "rc"] }
 strfmt = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+bincode = { workspace = true, features = ["serde"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { workspace = true, features = ["wasm_js"] }
 
 [build-dependencies]
 prost-build = { workspace = true }

@@ -7,9 +7,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use galileo_mvt::{MvtFeature, MvtGeometry};
-use galileo_types::cartesian::{CartesianPoint2d, Point2, Point3};
+use galileo_types::cartesian::{CartesianPoint2d, Point2, Point3, Vector2};
 use galileo_types::geometry::CartesianGeometry2d;
 use galileo_types::impls::{ClosedContour, Polygon};
+use galileo_types::MultiPolygon;
 use parking_lot::Mutex;
 pub use vector_tile::VectorTile;
 
@@ -19,7 +20,7 @@ use crate::layer::vector_tile_layer::tile_provider::{VectorTileProvider, VtStyle
 use crate::layer::Layer;
 use crate::messenger::Messenger;
 use crate::render::render_bundle::RenderBundle;
-use crate::render::{Canvas, PackedBundle, PolygonPaint, RenderOptions};
+use crate::render::{BundleToDraw, Canvas, PackedBundle, PolygonPaint, RenderOptions};
 use crate::tile_schema::{TileIndex, TileSchema};
 use crate::view::MapView;
 use crate::Color;
@@ -30,13 +31,15 @@ pub mod tile_provider;
 mod vector_tile;
 pub use builder::VectorTileLayerBuilder;
 
+use super::tiles::TilesContainer;
+
 /// Vector tile layers use [tile providers](VectorTileProvider) to load prepared vector tiles, and then render them using
 /// specified [styles](VectorTileStyle).
 pub struct VectorTileLayer {
     tile_provider: VectorTileProvider,
     tile_schema: TileSchema,
     style_id: VtStyleId,
-    displayed_tiles: Mutex<Vec<DisplayedTile>>,
+    displayed_tiles: TilesContainer<VtStyleId, VectorTileProvider>,
     prev_background: Mutex<Option<PreviousBackground>>,
     attribution: Option<Attribution>,
 }
@@ -56,21 +59,6 @@ struct PreviousBackground {
     replaced_at: web_time::Instant,
 }
 
-#[derive(Clone)]
-struct DisplayedTile {
-    index: TileIndex,
-    bundle: Arc<dyn PackedBundle>,
-    style_id: VtStyleId,
-    opacity: f32,
-    displayed_at: web_time::Instant,
-}
-
-impl DisplayedTile {
-    fn is_opaque(&self) -> bool {
-        self.opacity >= 0.999
-    }
-}
-
 impl Layer for VectorTileLayer {
     fn render(&self, view: &MapView, canvas: &mut dyn Canvas) {
         self.update_displayed_tiles(view, canvas);
@@ -80,18 +68,27 @@ impl Layer for VectorTileLayer {
             return;
         };
 
-        let displayed_tiles = self.displayed_tiles.lock();
-        let to_render: Vec<(&dyn PackedBundle, f32)> = std::iter::once((&*background_bundle, 1.0))
-            .chain(displayed_tiles.iter().map(|v| (&*v.bundle, v.opacity)))
-            .collect();
+        let displayed_tiles = self.displayed_tiles.tiles.lock();
+        let to_render: Vec<_> =
+            std::iter::once(BundleToDraw::with_opacity(&*background_bundle, 1.0))
+                .chain(displayed_tiles.iter().filter_map(|v| {
+                    let bbox = self.tile_schema.tile_bbox(v.index)?;
+                    Some(BundleToDraw::new(
+                        &*v.bundle,
+                        v.opacity,
+                        Vector2::new(bbox.x_min() as f32, bbox.y_max() as f32),
+                    ))
+                }))
+                .collect();
 
-        canvas.draw_bundles_with_opacity(&to_render, RenderOptions::default());
+        canvas.draw_bundles(&to_render, RenderOptions::default());
     }
 
     fn prepare(&self, view: &MapView) {
         if let Some(iter) = self.tile_schema.iter_tiles(view) {
             for index in iter {
-                self.tile_provider.load_tile(index, self.style_id, view);
+                self.tile_provider
+                    .load_tile(index.into(), self.style_id, view);
             }
         }
     }
@@ -134,10 +131,10 @@ impl VectorTileLayer {
     ) -> Self {
         let style_id = tile_provider.add_style(style);
         Self {
-            tile_provider,
-            tile_schema,
+            tile_provider: tile_provider.clone(),
+            tile_schema: tile_schema.clone(),
             style_id,
-            displayed_tiles: Default::default(),
+            displayed_tiles: TilesContainer::new(tile_schema, tile_provider),
             prev_background: Default::default(),
             attribution,
         }
@@ -149,77 +146,14 @@ impl VectorTileLayer {
         };
 
         let needed_indices: Vec<_> = tile_iter.collect();
+        let mut to_pack: Vec<TileIndex> = needed_indices.iter().map(|t| (*t).into()).collect();
+        to_pack.dedup();
+
         self.tile_provider
-            .pack_tiles(&needed_indices, self.style_id, canvas);
-
-        let mut displayed_tiles = self.displayed_tiles.lock();
-
-        let mut needed_tiles = Vec::with_capacity(needed_indices.len());
-        let mut to_substitute = vec![];
-
-        let now = web_time::Instant::now();
-        let fade_in_time = self.fade_in_time();
-        let mut requires_redraw = false;
-
-        for index in &needed_indices {
-            if let Some(displayed) = displayed_tiles
-                .iter_mut()
-                .find(|displayed| displayed.index == *index && displayed.style_id == self.style_id)
-            {
-                if !displayed.is_opaque() {
-                    to_substitute.push(*index);
-                    displayed.opacity = ((now.duration_since(displayed.displayed_at)).as_secs_f64()
-                        / fade_in_time.as_secs_f64())
-                    .min(1.0) as f32;
-                    requires_redraw = true;
-                }
-
-                needed_tiles.push(displayed.clone());
-            } else {
-                match self.tile_provider.get_tile(*index, self.style_id) {
-                    None => to_substitute.push(*index),
-                    Some(bundle) => {
-                        needed_tiles.push(DisplayedTile {
-                            index: *index,
-                            bundle,
-                            style_id: self.style_id,
-                            opacity: 0.0,
-                            displayed_at: now,
-                        });
-                        to_substitute.push(*index);
-                        requires_redraw = true;
-                    }
-                }
-            }
-        }
-
-        let mut new_displayed = vec![];
-        for displayed in displayed_tiles.iter() {
-            if needed_tiles
-                .iter()
-                .any(|new| new.index == displayed.index && new.style_id == displayed.style_id)
-            {
-                continue;
-            }
-
-            let Some(displayed_bbox) = self.tile_schema.tile_bbox(displayed.index) else {
-                continue;
-            };
-
-            for subst in &to_substitute {
-                let Some(subst_bbox) = self.tile_schema.tile_bbox(*subst) else {
-                    continue;
-                };
-
-                if displayed_bbox.intersects(subst_bbox) {
-                    new_displayed.push(displayed.clone());
-                    break;
-                }
-            }
-        }
-
-        new_displayed.append(&mut needed_tiles);
-        *displayed_tiles = new_displayed;
+            .pack_tiles(&to_pack, self.style_id, canvas);
+        let requires_redraw = self
+            .displayed_tiles
+            .update_displayed_tiles(needed_indices, self.style_id);
 
         if requires_redraw {
             self.tile_provider.request_redraw();
@@ -249,12 +183,21 @@ impl VectorTileLayer {
         point: &impl CartesianPoint2d<Num = f64>,
         view: &MapView,
     ) -> Vec<(String, MvtFeature)> {
+        const PIXEL_TOLERANCE: f64 = 2.0;
+        let view_resolution = view.resolution();
+        let res_tolerance = view_resolution * PIXEL_TOLERANCE;
+
         let mut features = vec![];
         if let Some(iter) = self.tile_schema.iter_tiles(view) {
             for index in iter {
                 let Some(tile_bbox) = self.tile_schema.tile_bbox(index) else {
                     continue;
                 };
+
+                if !tile_bbox.shrink(-res_tolerance).contains(point) {
+                    continue;
+                }
+
                 let Some(lod_resolution) = self.tile_schema.lod_resolution(index.z) else {
                     continue;
                 };
@@ -266,9 +209,9 @@ impl VectorTileLayer {
                     ((tile_bbox.y_max() - point.y()) / tile_resolution) as f32,
                 );
 
-                let tolerance = (view.resolution() / tile_resolution) as f32 * 2.0;
+                let tolerance = ((view.resolution() / tile_resolution) * PIXEL_TOLERANCE) as f32;
 
-                if let Some(mvt_tile) = self.tile_provider.get_mvt_tile(index) {
+                if let Some(mvt_tile) = self.tile_provider.get_mvt_tile(index.into()) {
                     for layer in &mvt_tile.layers {
                         for feature in &layer.features {
                             match &feature.geometry {
@@ -281,16 +224,13 @@ impl VectorTileLayer {
                                     }
                                 }
                                 MvtGeometry::LineString(contours) => {
-                                    if contours
-                                        .iter()
-                                        .any(|c| c.is_point_inside(&tile_point, tolerance))
-                                    {
+                                    if contours.is_point_inside(&tile_point, tolerance) {
                                         features.push((layer.name.clone(), feature.clone()));
                                     }
                                 }
                                 MvtGeometry::Polygon(polygons) => {
                                     if polygons
-                                        .iter()
+                                        .polygons()
                                         .any(|p| p.is_point_inside(&tile_point, tolerance))
                                     {
                                         features.push((layer.name.clone(), feature.clone()));
@@ -311,7 +251,7 @@ impl VectorTileLayer {
         view: &MapView,
         canvas: &mut dyn Canvas,
     ) -> Option<Box<dyn PackedBundle>> {
-        let mut bundle = RenderBundle::default();
+        let mut bundle = RenderBundle::new(view.dpi_scale_factor());
         let bbox = view.get_bbox()?;
         let bounds = Polygon::new(
             ClosedContour::new(vec![
@@ -372,10 +312,10 @@ mod tests {
 
         let style_id = provider.add_style(VectorTileStyle::default());
         VectorTileLayer {
-            tile_provider: provider,
+            tile_provider: provider.clone(),
             tile_schema: TileSchema::web(18),
             style_id,
-            displayed_tiles: Default::default(),
+            displayed_tiles: TilesContainer::new(tile_schema, provider),
             prev_background: Default::default(),
             attribution: None,
         }
