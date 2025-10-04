@@ -32,6 +32,7 @@ impl<Num> Point2<Num> {
         [self.x, self.y]
     }
 
+    /// Returns a 3D point with the same coordinates and the given z coordinate.
     pub fn point3(&self, z: Num) -> Point3<Num>
     where
         Num: Copy,
@@ -80,13 +81,53 @@ impl<Num: Copy> Vector2<Num> {
     {
         self.dx * self.dx + self.dy * self.dy
     }
+}
 
+impl<Num> Vector2<Num>
+where
+    Num: Copy + num_traits::Float,
+{
     /// Returns magnitude (length) of the vector.
-    pub fn magnitude(&self) -> Num
-    where
-        Num: num_traits::Float,
-    {
+    pub fn magnitude(&self) -> Num {
         self.magnitude_sq().sqrt()
+    }
+
+    /// Returns angle of the vector in radians.
+    pub fn angle(&self) -> Num {
+        self.dy.atan2(self.dx)
+    }
+
+    /// Returns the angle between this vector and another vector.
+    pub fn angle_with(&self, other: Vector2<Num>) -> Num {
+        (self.cross(other)).atan2(self.dot(other))
+    }
+
+    /// Normalizes the vector in-place.
+    pub fn normalize(&mut self)
+    where
+        Num: std::ops::DivAssign<Num>,
+    {
+        let mag = self.magnitude();
+        self.dx /= mag;
+        self.dy /= mag;
+    }
+
+    /// Returns normalized copy of the vector.
+    pub fn normalized(&self) -> Vector2<Num>
+    where
+        Num: std::ops::Div<Num, Output = Num>,
+    {
+        let mag = self.magnitude();
+        Vector2::new(self.dx / mag, self.dy / mag)
+    }
+
+    /// Returns dot product of the vector and another vector.
+    pub fn dot(&self, other: Vector2<Num>) -> Num {
+        self.dx * other.dx + self.dy * other.dy
+    }
+
+    pub fn cross(&self, other: Vector2<Num>) -> Num {
+        self.dx * other.dy - self.dy * other.dx
     }
 }
 
@@ -156,6 +197,20 @@ where
         Self {
             dx: self.dx * rhs.width(),
             dy: self.dy * rhs.height(),
+        }
+    }
+}
+
+impl<Num> std::ops::Div<Num> for Vector2<Num>
+where
+    Num: std::ops::Div<Num, Output = Num> + Copy,
+{
+    type Output = Vector2<Num>;
+
+    fn div(self, rhs: Num) -> Self::Output {
+        Self {
+            dx: self.dx / rhs,
+            dy: self.dy / rhs,
         }
     }
 }
