@@ -18,6 +18,7 @@ use galileo_types::cartesian::Point3;
 use galileo_types::geo::Crs;
 use galileo_types::geometry::Geom;
 use las::Read;
+use galileo::MapView;
 use nalgebra::{Rotation3, Translation3, Vector3};
 
 #[cfg(not(target_arch = "wasm32"))]

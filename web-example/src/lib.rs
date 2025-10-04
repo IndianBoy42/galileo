@@ -47,6 +47,7 @@ pub fn main() {
     feature_layers::run();
 
     #[cfg(feature = "egui_app")]
+    #[cfg(target_arch = "wasm32")]
     egui_app::run();
 
     #[cfg(feature = "georust")]

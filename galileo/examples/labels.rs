@@ -21,6 +21,7 @@ use galileo_types::geo::Crs;
 use galileo_types::geometry::Geom;
 use galileo_types::geometry_type::GeoSpace2d;
 use galileo_types::latlon;
+use galileo::MapView;
 use parking_lot::RwLock;
 
 struct EguiMapApp {

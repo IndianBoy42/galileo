@@ -54,6 +54,7 @@ fn create_map() -> Map {
         SimpleContourSymbol {
             color: Color::BLACK,
             width: 8.0,
+            miter_limit: 2.0,
         },
         Crs::WGS84,
     )

@@ -8,6 +8,7 @@ use galileo::render::render_bundle::RenderBundle;
 use galileo::{Color, Map, MapBuilder};
 use galileo_types::cartesian::Point3;
 use galileo_types::geo::Crs;
+use galileo::MapView;
 use galileo_types::geometry::Geom;
 
 #[cfg(not(target_arch = "wasm32"))]

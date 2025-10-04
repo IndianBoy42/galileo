@@ -16,6 +16,7 @@ use galileo_types::geo::{Crs, Projection};
 use galileo_types::geometry::Geom;
 use galileo_types::geometry_type::CartesianSpace2d;
 use galileo_types::{latlon, CartesianGeometry2d, Geometry};
+use galileo::MapView;
 use parking_lot::RwLock;
 
 const YELLOW_PIN: &[u8] = include_bytes!("data/pin-yellow.png");

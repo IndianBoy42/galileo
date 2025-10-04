@@ -15,6 +15,7 @@ use galileo_types::cartesian::{Point2, Point3};
 use galileo_types::geo::Crs;
 use galileo_types::geometry::Geom;
 use galileo_types::geometry_type::CartesianSpace2d;
+use galileo::MapView;
 use parking_lot::{Mutex, RwLock};
 
 mod data;

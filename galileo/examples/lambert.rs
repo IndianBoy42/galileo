@@ -17,6 +17,7 @@ use galileo_types::geo::{
 };
 use galileo_types::geometry::Geom;
 use galileo_types::geometry_type::CartesianSpace2d;
+use galileo::MapView;
 use parking_lot::{Mutex, RwLock};
 
 mod data;
@@ -158,8 +159,9 @@ impl Symbol<Country> for CountrySymbol {
         geometry: &Geom<Point3>,
         min_resolution: f64,
         bundle: &mut RenderBundle,
+        view: &MapView,
     ) {
         self.get_polygon_symbol(feature)
-            .render(&(), geometry, min_resolution, bundle)
+            .render(&(), geometry, min_resolution, bundle, view)
     }
 }
