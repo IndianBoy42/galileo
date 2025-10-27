@@ -120,7 +120,7 @@ impl DecodedImageType {
 mod serialization {
     use base64::prelude::BASE64_STANDARD;
     use base64::Engine;
-    use image::ImageEncoder;
+    use image::{ExtendedColorType, ImageEncoder};
 
     use super::*;
 
@@ -140,7 +140,7 @@ mod serialization {
                         bytes,
                         dimensions.width(),
                         dimensions.height(),
-                        ColorType::Rgba8,
+                        ExtendedColorType::Rgba8,
                     ) {
                         return Err(serde::ser::Error::custom(format!(
                             "failed to encode image to PNG: {err}"

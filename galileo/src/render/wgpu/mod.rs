@@ -14,11 +14,12 @@ use nalgebra::{Point4, Rotation3, Vector3};
 use parking_lot::Mutex;
 use wgpu::util::DeviceExt;
 use wgpu::{
-    Adapter, BindGroup, Buffer, BufferAddress, BufferDescriptor, BufferUsages, Device, Extent3d,
-    Origin3d, Queue, RenderPassDepthStencilAttachment, StoreOp, Surface, SurfaceConfiguration,
-    SurfaceError, SurfaceTexture, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
-    Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-    TextureView, TextureViewDescriptor, WasmNotSendSync, COPY_BYTES_PER_ROW_ALIGNMENT,
+    Adapter, BindGroup, Buffer, BufferAddress, BufferDescriptor, BufferUsages, Device,
+    ExperimentalFeatures, Extent3d, Origin3d, Queue, RenderPassDepthStencilAttachment, StoreOp,
+    Surface, SurfaceConfiguration, SurfaceError, SurfaceTexture, TexelCopyBufferInfo,
+    TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
+    WasmNotSendSync, COPY_BYTES_PER_ROW_ALIGNMENT,
 };
 
 use super::render_bundle::screen_set::{RenderSetState, ScreenSetData};
@@ -418,6 +419,7 @@ impl WgpuRenderer {
                 label: None,
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
+                experimental_features: ExperimentalFeatures::disabled(),
             })
             .await
             .expect("Failed to obtain WGPU device")
@@ -620,7 +622,7 @@ impl WgpuRenderer {
             }
         });
 
-        if let Err(err) = self.device.poll(wgpu::PollType::Wait) {
+        if let Err(err) = self.device.poll(wgpu::PollType::wait_indefinitely()) {
             log::error!("polling device failed: {err:?}");
         }
 
@@ -684,6 +686,7 @@ impl WgpuRenderer {
                             }),
                             store: StoreOp::Store,
                         },
+                        depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
@@ -810,6 +813,7 @@ impl WgpuRenderer {
                         load: wgpu::LoadOp::Load,
                         store: StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
                     view: &renderer_targets.stencil_view,
@@ -983,6 +987,7 @@ impl Canvas for WgpuCanvas<'_> {
                         load: wgpu::LoadOp::Load,
                         store: StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
                     view: depth_view,
@@ -1183,6 +1188,7 @@ impl Canvas for WgpuCanvas<'_> {
                         load: wgpu::LoadOp::Load,
                         store: StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
                     view: depth_view,
