@@ -20,6 +20,7 @@ use galileo_types::geometry_type::CartesianSpace2d;
 use galileo::MapView;
 use parking_lot::{Mutex, RwLock};
 
+#[allow(dead_code)]
 mod data;
 
 #[cfg(not(target_arch = "wasm32"))]
