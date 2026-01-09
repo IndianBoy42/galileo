@@ -128,13 +128,13 @@ impl TileSchema {
         let tile_w = lod.resolution() * self.tile_width as f64;
         let tile_h = lod.resolution() * self.tile_height as f64;
 
-        let x_min = (self.x_adj(bounding_box.x_min()) / tile_w) as i32;
+        let x_min = (self.x_adj(bounding_box.x_min()) / tile_w).floor() as i32;
         let x_min = x_min.max(self.min_x_index(lod.resolution()));
 
         let x_max_adj = self.x_adj(bounding_box.x_max());
         let x_add_one = if (x_max_adj % tile_w) < 0.001 { -1 } else { 0 };
 
-        let x_max = (x_max_adj / tile_w) as i32 + x_add_one;
+        let x_max = (x_max_adj / tile_w).floor() as i32 + x_add_one;
         let x_max = x_max.min(self.max_x_index(lod.resolution()));
 
         let (top, bottom) = if self.y_direction == VerticalDirection::TopToBottom {
@@ -143,13 +143,13 @@ impl TileSchema {
             (bounding_box.y_max(), bounding_box.y_min())
         };
 
-        let y_min = (self.y_adj(bottom) / tile_h) as i32;
+        let y_min = (self.y_adj(bottom) / tile_h).floor() as i32;
         let y_min = y_min.max(self.min_y_index(lod.resolution()));
 
         let y_max_adj = self.y_adj(top);
         let y_add_one = if (y_max_adj % tile_h) < 0.001 { -1 } else { 0 };
 
-        let y_max = (y_max_adj / tile_h) as i32 + y_add_one;
+        let y_max = (y_max_adj / tile_h).floor() as i32 + y_add_one;
         let y_max = y_max.min(self.max_y_index(lod.resolution()));
 
         Some((x_min..=x_max).flat_map(move |x| {

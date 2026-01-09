@@ -151,16 +151,15 @@ impl MapView {
         )
         .magnify(4.0);
 
-        if let Some(points) = points
-            .into_iter()
-            .map(|p| self.screen_to_map(p))
-            .collect::<Option<Vec<Point2<f64>>>>()
-        {
-            let bbox = Rect::from_points(points.iter())?;
-            Some(bbox.limit(max_bbox))
-        } else {
-            Some(max_bbox)
+        let mut bbox = max_bbox;
+
+        for p in points {
+            if let Some(map_p) = self.screen_to_map(p) {
+                bbox = bbox.merge(Rect::from_point(&map_p));
+            }
         }
+
+        Some(bbox)
     }
 
     fn map_center_to_screen_center_transform(&self) -> Option<OMatrix<f64, U4, U4>> {
