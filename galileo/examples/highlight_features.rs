@@ -185,7 +185,7 @@ impl Symbol<PointMarker> for ColoredPointSymbol {
                     anchor: Vector2::new(0.5, 1.0),
                     size: None,
                 },
-                view
+                view,
             );
         }
     }

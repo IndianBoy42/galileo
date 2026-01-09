@@ -841,14 +841,35 @@ impl Canvas for WgpuCanvas<'_> {
                 occlusion_query_set: None,
             });
 
-            let opacities: Vec<f32> = bundles.iter().map(|(_, opacity)| *opacity).collect();
+            let [cx, cy, cz] = self
+                .map_view
+                .projected_center()
+                .expect("Rendering requires a valid projection")
+                .array();
+
+            let mut instances = Vec::with_capacity(bundles.len());
+            for (bundle, opacity) in bundles {
+                if let Some(cast) = bundle.as_any().downcast_ref::<WgpuPackedBundle>() {
+                    let [ax, ay, az] = cast.anchor;
+                    instances.push(DisplayInstance {
+                        anchor: [(ax - cx) as f32, (ay - cy) as f32, (az - cz) as f32],
+                        opacity: *opacity,
+                    });
+                } else {
+                    instances.push(DisplayInstance {
+                        anchor: [0.0, 0.0, 0.0],
+                        opacity: *opacity,
+                    });
+                }
+            }
+
             let display_buffer =
                 self.renderer
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: None,
                         usage: wgpu::BufferUsages::VERTEX,
-                        contents: bytemuck::cast_slice(&opacities),
+                        contents: bytemuck::cast_slice(&instances),
                     });
             render_pass.set_vertex_buffer(1, display_buffer.slice(..));
 
@@ -1101,6 +1122,7 @@ struct WgpuPackedBundle {
     dot_buffers: Option<WgpuDotBuffers>,
     image_buffers: Vec<WgpuImage>,
 
+    anchor: [f64; 3],
     screen_sets: Vec<Arc<Mutex<WgpuScreenSet>>>,
 }
 
@@ -1184,6 +1206,7 @@ impl WgpuPackedBundle {
             .collect();
 
         let mut image_buffers = vec![];
+        // FIXME: doesn't interact well with map_center_to_scene_mtx
         for image_info in images {
             let image = renderer_targets.pipelines.image_pipeline().create_image(
                 &renderer.device,
@@ -1257,6 +1280,7 @@ impl WgpuPackedBundle {
             map_ref_buffers: poly_buffers,
             image_buffers,
             dot_buffers,
+            anchor: world_set.anchor.unwrap_or([0.0, 0.0, 0.0]),
             screen_sets,
         }
     }
@@ -1364,6 +1388,7 @@ impl PolyVertex {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct DisplayInstance {
+    pub anchor: [f32; 3],
     pub opacity: f32,
 }
 
@@ -1372,11 +1397,18 @@ impl DisplayInstance {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<DisplayInstance>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: 10,
-                format: wgpu::VertexFormat::Float32,
-            }],
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 10,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 11,
+                    format: wgpu::VertexFormat::Float32,
+                },
+            ],
         }
     }
 }

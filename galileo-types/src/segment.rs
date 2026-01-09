@@ -54,25 +54,25 @@ impl<P: CartesianPoint2d> Segment<'_, P> {
             q.x() <= x_max && q.x() >= x_min && q.y() <= y_max && q.y() >= y_min
         }
 
-        let o1 = Orientation::triplet(self.0, other.0, self.1);
-        let o2 = Orientation::triplet(self.0, other.1, self.1);
-        let o3 = Orientation::triplet(other.0, self.0, other.1);
-        let o4 = Orientation::triplet(other.0, self.1, other.1);
+        let ori1 = Orientation::triplet(self.0, other.0, self.1);
+        let ori2 = Orientation::triplet(self.0, other.1, self.1);
+        let ori3 = Orientation::triplet(other.0, self.0, other.1);
+        let ori4 = Orientation::triplet(other.0, self.1, other.1);
 
-        if o1 != o2 && o3 != o4 {
+        if ori1 != ori2 && ori3 != ori4 {
             return true;
         }
 
-        if o1 == Orientation::Collinear && on_segment(self.0, other.0, self.1) {
+        if ori1 == Orientation::Collinear && on_segment(self.0, other.0, self.1) {
             return true;
         }
-        if o2 == Orientation::Collinear && on_segment(self.0, other.1, self.1) {
+        if ori2 == Orientation::Collinear && on_segment(self.0, other.1, self.1) {
             return true;
         }
-        if o3 == Orientation::Collinear && on_segment(other.0, self.0, other.1) {
+        if ori3 == Orientation::Collinear && on_segment(other.0, self.0, other.1) {
             return true;
         }
-        if o4 == Orientation::Collinear && on_segment(other.0, self.1, other.1) {
+        if ori4 == Orientation::Collinear && on_segment(other.0, self.1, other.1) {
             return true;
         }
 

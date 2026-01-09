@@ -174,7 +174,8 @@ impl Pipelines {
         self.set_bindings(render_pass);
 
         if let Some(clip) = &bundle.clip_area_buffers {
-            self.clip.clip(clip, render_pass, render_options);
+            self.clip
+                .clip(clip, render_pass, render_options, bundle_index);
         }
 
         for image in &bundle.image_buffers {
@@ -192,7 +193,8 @@ impl Pipelines {
         }
 
         if let Some(clip) = &bundle.clip_area_buffers {
-            self.clip.unclip(clip, render_pass, render_options);
+            self.clip
+                .unclip(clip, render_pass, render_options, bundle_index);
         }
 
         if let Some(dot_buffers) = &bundle.dot_buffers {

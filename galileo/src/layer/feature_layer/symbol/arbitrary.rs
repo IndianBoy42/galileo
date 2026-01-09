@@ -52,21 +52,26 @@ impl<F> Symbol<F> for ArbitraryGeometrySymbol {
             Geom::Point(_) => self
                 .point
                 .render(feature, geometry, min_resolution, bundle, view),
-            Geom::MultiPoint(_) => self
-                .point
-                .render(feature, geometry, min_resolution, bundle, view),
-            Geom::Contour(_) => self
-                .contour
-                .render(feature, geometry, min_resolution, bundle, view),
-            Geom::MultiContour(_) => self
-                .contour
-                .render(feature, geometry, min_resolution, bundle, view),
-            Geom::Polygon(_) => self
-                .polygon
-                .render(feature, geometry, min_resolution, bundle, view),
-            Geom::MultiPolygon(_) => self
-                .polygon
-                .render(feature, geometry, min_resolution, bundle, view),
+            Geom::MultiPoint(_) => {
+                self.point
+                    .render(feature, geometry, min_resolution, bundle, view)
+            }
+            Geom::Contour(_) => {
+                self.contour
+                    .render(feature, geometry, min_resolution, bundle, view)
+            }
+            Geom::MultiContour(_) => {
+                self.contour
+                    .render(feature, geometry, min_resolution, bundle, view)
+            }
+            Geom::Polygon(_) => {
+                self.polygon
+                    .render(feature, geometry, min_resolution, bundle, view)
+            }
+            Geom::MultiPolygon(_) => {
+                self.polygon
+                    .render(feature, geometry, min_resolution, bundle, view)
+            }
         }
     }
 }

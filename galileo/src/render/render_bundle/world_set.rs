@@ -33,6 +33,7 @@ pub(crate) struct WorldRenderSet {
     pub clip_area: Option<VertexBuffers<PolyVertex, u32>>,
     pub image_store: Vec<Arc<DecodedImage>>,
     pub buffer_size: usize,
+    pub anchor: Option<[f64; 3]>,
 }
 
 #[repr(C)]
@@ -74,11 +75,25 @@ impl WorldRenderSet {
             clip_area: None,
             image_store: Vec::new(),
             buffer_size: 0,
+            anchor: None,
         }
     }
 
     pub fn approx_buffer_size(&self) -> usize {
         self.buffer_size
+    }
+
+    fn get_anchor(&mut self, view: &MapView) -> [f64; 3] {
+        if let Some(anchor) = self.anchor {
+            anchor
+        } else {
+            let anchor = view
+                .projected_center()
+                .expect("MapView must have a projected center")
+                .array();
+            self.anchor = Some(anchor);
+            anchor
+        }
     }
 
     pub fn clip_area<N, P, Poly>(&mut self, polygon: &Poly, view: &MapView)
@@ -90,13 +105,14 @@ impl WorldRenderSet {
         Poly::Contour: Contour<Point = P>,
     {
         let mut tessellation = VertexBuffers::new();
+        let anchor = self.get_anchor(view);
         Self::tessellate_polygon(
             polygon,
             &PolygonPaint {
                 color: Color::BLACK,
             },
             &mut tessellation,
-            view, // Pass view
+            anchor,
         );
 
         self.buffer_size += tessellation.vertices.len() * std::mem::size_of::<PolyVertex>()
@@ -117,9 +133,7 @@ impl WorldRenderSet {
         self.buffer_size += image.byte_size() + std::mem::size_of::<ImageVertex>() * 4;
 
         let index = self.add_image_to_store(Arc::new(image), view);
-
-        // let [cx, cy, _] = view.projected_center().expect("Invalid MapView").array();
-        let [cx, cy] = [0.0, 0.0];
+        let [cx, cy, _] = self.get_anchor(view);
 
         let relative_vertices = [
             ImageVertex {
@@ -259,6 +273,7 @@ impl WorldRenderSet {
         P: CartesianPoint3d<Num = N>,
         C: Contour<Point = P>,
     {
+        let [cx, cy, cz] = self.get_anchor(view);
         let tessellation = &mut self.poly_tessellation;
         let mut path_builder = BuilderWithAttributes::new(1);
         let mut iterator = line.iter_points();
@@ -266,11 +281,6 @@ impl WorldRenderSet {
         let Some(first_point) = iterator.next() else {
             return;
         };
-
-        let view_center = view.projected_center().unwrap();
-        let cx = view_center.x();
-        let cy = view_center.y();
-        let cz = view_center.z(); // Assuming Z=0 if not otherwise set
 
         let at = point(
             (first_point.x().as_() - cx) / min_resolution,
@@ -352,11 +362,12 @@ impl WorldRenderSet {
         Poly: Polygon,
         Poly::Contour: Contour<Point = P>,
     {
+        let anchor = self.get_anchor(view);
         let lod = &mut self.poly_tessellation;
         let start_index = lod.vertices.len();
         let start_index_count = lod.indices.len();
 
-        Self::tessellate_polygon(polygon, paint, lod, view); // Pass view
+        Self::tessellate_polygon(polygon, paint, lod, anchor);
 
         let end_index = self.poly_tessellation.vertices.len();
 
@@ -369,19 +380,15 @@ impl WorldRenderSet {
         polygon: &Poly,
         paint: &PolygonPaint,
         tessellation: &mut VertexBuffers<PolyVertex, u32>,
-        view: &MapView, // Added view parameter
+        anchor: [f64; 3],
     ) where
         N: AsPrimitive<f64>,
         P: CartesianPoint3d<Num = N>,
         Poly: Polygon,
         Poly::Contour: Contour<Point = P>,
     {
-        // Use the MapView's projected center as the reference for relative coordinates
-        // Get the first point to use as a fallback if view center is not available (though it should be)
-        let view_center = view.projected_center().unwrap();
-        let v_cx = view_center.x();
-        let v_cy = view_center.y();
-        let v_cz = view_center.z();
+        // Use the anchor as the reference for relative coordinates
+        let [v_cx, v_cy, v_cz] = anchor;
 
         let mut path_builder = BuilderWithAttributes::new(1); // 1 attribute for Z
         for contour in polygon.iter_contours() {
@@ -437,10 +444,10 @@ impl WorldRenderSet {
             offset,
             rotation,
         } = shape;
-        let view_center = view.projected_center().unwrap();
-        let rel_anchor_x = position.x().as_() - view_center.x();
-        let rel_anchor_y = position.y().as_() - view_center.y();
-        let rel_anchor_z = position.z().as_() - view_center.z();
+        let [v_cx, v_cy, v_cz] = self.get_anchor(view);
+        let rel_anchor_x = position.x().as_() - v_cx;
+        let rel_anchor_y = position.y().as_() - v_cy;
+        let rel_anchor_z = position.z().as_() - v_cz;
         let relative_anchor_pos_f32 = [
             rel_anchor_x as f32,
             rel_anchor_y as f32,
@@ -531,10 +538,10 @@ impl WorldRenderSet {
         N: AsPrimitive<f64>,
         P: CartesianPoint3d<Num = N>,
     {
-        let view_center = view.projected_center().unwrap();
-        let rel_anchor_x = position.x().as_() - view_center.x();
-        let rel_anchor_y = position.y().as_() - view_center.y();
-        let rel_anchor_z = position.z().as_() - view_center.z();
+        let [v_cx, v_cy, v_cz] = self.get_anchor(view);
+        let rel_anchor_x = position.x().as_() - v_cx;
+        let rel_anchor_y = position.y().as_() - v_cy;
+        let rel_anchor_z = position.z().as_() - v_cz;
 
         let SectorParameters {
             fill,
@@ -615,10 +622,7 @@ impl WorldRenderSet {
         N: AsPrimitive<f64>,
         P: CartesianPoint3d<Num = N>,
     {
-        let view_center = view.projected_center().unwrap();
-        let vc_x = view_center.x();
-        let vc_y = view_center.y();
-        let vc_z = view_center.z();
+        let [vc_x, vc_y, vc_z] = self.get_anchor(view);
 
         // Assuming offset is in world units for Dot, applied before making relative to view center
         let world_x_with_offset = point.x().as_() + offset.dx() as f64;
@@ -647,10 +651,10 @@ impl WorldRenderSet {
         N: AsPrimitive<f64>,
         P: CartesianPoint3d<Num = N>,
     {
-        let view_center = view.projected_center().unwrap();
-        let rel_anchor_x = position.x().as_() - view_center.x();
-        let rel_anchor_y = position.y().as_() - view_center.y();
-        let rel_anchor_z = position.z().as_() - view_center.z();
+        let [v_cx, v_cy, v_cz] = self.get_anchor(view);
+        let rel_anchor_x = position.x().as_() - v_cx;
+        let rel_anchor_y = position.y().as_() - v_cy;
+        let rel_anchor_z = position.z().as_() - v_cz;
 
         match TextService::shape(text, style, offset) {
             Ok(TextShaping::Tessellation { glyphs, .. }) => {
@@ -831,7 +835,11 @@ impl FillVertexConstructor<PolyVertex> for PolygonVertexConstructor {
         let pos_y_relative_to_view_center = vertex.position().y as f64;
         // Assuming interpolated_attributes()[0] for Z if used, or 0.0 if Z is constant for polygons.
         // The path builder for polygons was using first_point.z().as_() - cz.
-        let pos_z_relative_to_view_center = vertex.interpolated_attributes()[0] as f64;
+        let pos_z_relative_to_view_center = vertex
+            .interpolated_attributes()
+            .first()
+            .copied()
+            .unwrap_or_default() as f64;
 
         PolyVertex::new(
             [

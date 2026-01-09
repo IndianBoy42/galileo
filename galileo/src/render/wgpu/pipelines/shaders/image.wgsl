@@ -7,7 +7,7 @@ struct ViewUniform {
     resolution: f32,
 }
 
-@group(0) @binding(0)
+@group(0) @binding(1)
 var<uniform> transform: ViewUniform;
 
 struct VertexInput {
@@ -15,7 +15,8 @@ struct VertexInput {
     @location(1) opacity: f32,
     @location(2) tex_coord: vec2<f32>,
     @location(3) offset: vec2<f32>,
-    @location(10) bundle_opacity: f32,
+    @location(10) bundle_anchor: vec3<f32>,
+    @location(11) bundle_opacity: f32,
 }
 
 struct VertexOutput {
@@ -31,7 +32,8 @@ fn vs_main(
     var out: VertexOutput;
     out.tex_coord = model.tex_coord;
 
-    var point_position = transform.view_proj * vec4<f32>(model.position, 0.0, 1.0);
+    let position = vec3<f32>(model.position, 0.0) + model.bundle_anchor;
+    var point_position = transform.view_proj * vec4<f32>(position, 1.0);
     var vertex_delta = vec4<f32>(model.offset * transform.inv_screen_size * point_position[3] * 2.0, 0.0, 0.0);
 
     out.clip_position = point_position + vertex_delta;

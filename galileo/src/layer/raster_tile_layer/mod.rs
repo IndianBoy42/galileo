@@ -4,7 +4,7 @@ use std::any::Any;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use galileo_types::cartesian::Size;
+use galileo_types::cartesian::{CartesianPoint2d, Size};
 use parking_lot::Mutex;
 use quick_cache::sync::Cache;
 use web_time::{Duration, SystemTime};
@@ -254,7 +254,9 @@ impl RasterTileLayer {
                         continue;
                     };
 
-                    // FIXME: doesn't interact well with map_center_to_scene_mtx
+                    let tile_center = tile_bbox.center();
+                    bundle.set_anchor([tile_center.x(), tile_center.y(), 0.0]);
+
                     bundle.add_image(
                         owned,
                         tile_bbox.into_quadrangle(),

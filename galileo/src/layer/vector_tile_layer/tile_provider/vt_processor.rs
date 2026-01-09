@@ -45,6 +45,8 @@ impl VtProcessor {
             GalileoError::Generic(format!("cannot get lod resolution for lod {}", index.z))
         })?;
         let tile_resolution = lod_resolution * tile_schema.tile_width() as f64;
+        let tile_center = bbox.center();
+        bundle.set_anchor([tile_center.x(), tile_center.y(), 0.0]);
 
         let bounds = Polygon::new(
             ClosedContour::new(vec![

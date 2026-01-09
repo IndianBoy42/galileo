@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::ops::{Index, IndexMut};
+
+use serde::{Deserialize, Serialize};
 
 use crate::geo::Projection;
 use crate::geometry_type::{ContourGeometryType, GeometryType};

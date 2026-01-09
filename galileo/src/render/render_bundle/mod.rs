@@ -26,6 +26,20 @@ pub struct RenderBundle {
 }
 
 impl RenderBundle {
+    /// Creates a new empty bundle.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the anchor point for the bundle.
+    ///
+    /// The anchor point is used as a reference point for all world-space primitives in the bundle.
+    /// Using an anchor point close to the primitives helps to avoid precision issues when using
+    /// 32-bit floating point numbers for coordinates.
+    pub fn set_anchor(&mut self, anchor: [f64; 3]) {
+        self.world_set.anchor = Some(anchor);
+    }
+
     /// Adds an image to the bundle.
     pub fn add_image(
         &mut self,

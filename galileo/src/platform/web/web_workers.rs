@@ -476,10 +476,11 @@ mod worker {
         view: MapView,
     ) -> WebWorkerResponsePayload {
         let mut bundle = RenderBundle::default();
-        let result = match VtProcessor::prepare(&tile, &mut bundle, index, &style, &tile_schema, view) {
-            Ok(()) => Ok(bundle),
-            Err(_) => Err(TileProcessingError::Rendering),
-        };
+        let result =
+            match VtProcessor::prepare(&tile, &mut bundle, index, &style, &tile_schema, view) {
+                Ok(()) => Ok(bundle),
+                Err(_) => Err(TileProcessingError::Rendering),
+            };
 
         WebWorkerResponsePayload::ProcessVtTile { result }
     }
