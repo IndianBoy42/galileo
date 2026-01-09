@@ -115,7 +115,12 @@ impl TileSchema {
 
         let resolution = view.resolution();
         let bounding_box = view.get_bbox()?;
-        self.iter_tiles_over_bbox(resolution, bounding_box)
+
+        // Expand the bounding box slightly to ensure neighboring tiles are loaded even at high zoom
+        // and to provide a margin for smooth panning.
+        let expanded_bbox = bounding_box.magnify(1.1);
+
+        self.iter_tiles_over_bbox(resolution, expanded_bbox)
     }
 
     fn iter_tiles_over_bbox(
@@ -131,10 +136,7 @@ impl TileSchema {
         let x_min = (self.x_adj(bounding_box.x_min()) / tile_w).floor() as i32;
         let x_min = x_min.max(self.min_x_index(lod.resolution()));
 
-        let x_max_adj = self.x_adj(bounding_box.x_max());
-        let x_add_one = if (x_max_adj % tile_w) < 0.001 { -1 } else { 0 };
-
-        let x_max = (x_max_adj / tile_w).floor() as i32 + x_add_one;
+        let x_max = ((self.x_adj(bounding_box.x_max()) - 0.001) / tile_w).floor() as i32;
         let x_max = x_max.min(self.max_x_index(lod.resolution()));
 
         let (top, bottom) = if self.y_direction == VerticalDirection::TopToBottom {
@@ -146,11 +148,12 @@ impl TileSchema {
         let y_min = (self.y_adj(bottom) / tile_h).floor() as i32;
         let y_min = y_min.max(self.min_y_index(lod.resolution()));
 
-        let y_max_adj = self.y_adj(top);
-        let y_add_one = if (y_max_adj % tile_h) < 0.001 { -1 } else { 0 };
-
-        let y_max = (y_max_adj / tile_h).floor() as i32 + y_add_one;
+        let y_max = ((self.y_adj(top) - 0.001) / tile_h).floor() as i32;
         let y_max = y_max.min(self.max_y_index(lod.resolution()));
+
+        if x_min > x_max || y_min > y_max {
+            return None;
+        }
 
         Some((x_min..=x_max).flat_map(move |x| {
             (y_min..=y_max).map(move |y| TileIndex {
