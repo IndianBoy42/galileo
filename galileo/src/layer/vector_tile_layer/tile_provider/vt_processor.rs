@@ -36,7 +36,6 @@ impl VtProcessor {
         index: TileIndex,
         style: &VectorTileStyle,
         tile_schema: &TileSchema,
-        view: &MapView,
     ) -> Result<(), GalileoError> {
         let bbox = tile_schema
             .tile_bbox(index)
@@ -48,6 +47,8 @@ impl VtProcessor {
         let tile_center = bbox.center();
         bundle.set_anchor([tile_center.x(), tile_center.y(), 0.0]);
 
+        let view = MapView::new_projected(&tile_center, lod_resolution);
+
         let bounds = Polygon::new(
             ClosedContour::new(vec![
                 Point3::new(bbox.x_min(), bbox.y_min(), 0.0),
@@ -57,7 +58,7 @@ impl VtProcessor {
             ]),
             vec![],
         );
-        bundle.world_set.clip_area(&bounds, view);
+        bundle.world_set.clip_area(&bounds, &view);
 
         for layer in mvt_tile.layers.iter().rev() {
             for feature in &layer.features {
@@ -84,11 +85,11 @@ impl VtProcessor {
                                         text,
                                         style,
                                         Vector2::default(),
-                                        view,
+                                        &view,
                                     );
                                 }
                                 _ => {
-                                    bundle.add_point(&position, &paint, lod_resolution, view);
+                                    bundle.add_point(&position, &paint, lod_resolution, &view);
                                 }
                             }
                         }
@@ -108,7 +109,7 @@ impl VtProcessor {
                                     ),
                                     &paint,
                                     lod_resolution,
-                                    view,
+                                    &view,
                                 );
                             }
                         }
@@ -122,7 +123,7 @@ impl VtProcessor {
                                     }),
                                     &paint,
                                     lod_resolution,
-                                    view,
+                                    &view,
                                 );
                             }
                         }

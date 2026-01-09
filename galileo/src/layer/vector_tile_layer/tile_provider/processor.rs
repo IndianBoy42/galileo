@@ -10,7 +10,6 @@ use crate::layer::vector_tile_layer::style::VectorTileStyle;
 use crate::layer::vector_tile_layer::tile_provider::VtStyleId;
 use crate::render::render_bundle::RenderBundle;
 use crate::tile_schema::TileIndex;
-use crate::MapView;
 
 /// Error while processing vector tile.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +44,5 @@ pub trait VectorTileProcessor: MaybeSend + MaybeSync {
         tile: Arc<MvtTile>,
         index: TileIndex,
         style_id: VtStyleId,
-        view: &MapView,
     ) -> Result<RenderBundle, TileProcessingError>;
 }

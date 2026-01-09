@@ -80,18 +80,28 @@ impl Layer for VectorTileLayer {
             return;
         };
 
+        let mut requires_redraw = false;
         let displayed_tiles = self.displayed_tiles.lock();
         let to_render: Vec<(&dyn PackedBundle, f32)> = std::iter::once((&*background_bundle, 1.0))
-            .chain(displayed_tiles.iter().map(|v| (&*v.bundle, v.opacity)))
+            .chain(displayed_tiles.iter().map(|v| {
+                if !v.is_opaque() {
+                    requires_redraw = true;
+                }
+                (&*v.bundle, v.opacity)
+            }))
             .collect();
 
         canvas.draw_bundles_with_opacity(&to_render, RenderOptions::default());
+
+        if requires_redraw {
+            self.tile_provider.request_redraw();
+        }
     }
 
     fn prepare(&self, view: &MapView) {
         if let Some(iter) = self.tile_schema.iter_tiles(view) {
             for index in iter {
-                self.tile_provider.load_tile(index, self.style_id, view);
+                self.tile_provider.load_tile(index, self.style_id);
             }
         }
     }
