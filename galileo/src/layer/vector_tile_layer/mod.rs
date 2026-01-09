@@ -3,6 +3,7 @@
 //! the given [`VectorTileStyle`].
 
 use std::any::Any;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -159,8 +160,7 @@ impl VectorTileLayer {
         };
 
         let needed_indices: Vec<_> = tile_iter.collect();
-        self.tile_provider
-            .pack_tiles(&needed_indices, self.style_id, canvas);
+        let mut to_pack = needed_indices.clone();
 
         let mut displayed_tiles = self.displayed_tiles.lock();
 
@@ -171,13 +171,20 @@ impl VectorTileLayer {
         let fade_in_time = self.fade_in_time();
         let mut requires_redraw = false;
 
-        for index in &needed_indices {
+        let mut indices_to_check = needed_indices.clone();
+        let mut checked_indices = HashSet::new();
+
+        while let Some(index) = indices_to_check.pop() {
+            if !checked_indices.insert(index) {
+                continue;
+            }
+
             if let Some(displayed) = displayed_tiles
                 .iter_mut()
-                .find(|displayed| displayed.index == *index && displayed.style_id == self.style_id)
+                .find(|displayed| displayed.index == index && displayed.style_id == self.style_id)
             {
                 if !displayed.is_opaque() {
-                    to_substitute.push(*index);
+                    to_substitute.push(index);
                     displayed.opacity = ((now.duration_since(displayed.displayed_at)).as_secs_f64()
                         / fade_in_time.as_secs_f64())
                     .min(1.0) as f32;
@@ -186,22 +193,35 @@ impl VectorTileLayer {
 
                 needed_tiles.push(displayed.clone());
             } else {
-                match self.tile_provider.get_tile(*index, self.style_id) {
-                    None => to_substitute.push(*index),
+                match self.tile_provider.get_tile(index, self.style_id) {
+                    None => {
+                        to_substitute.push(index);
+                        if let Some(substitutes) = self.tile_schema.get_substitutes(index) {
+                            for sub_index in substitutes {
+                                indices_to_check.push(sub_index);
+                                to_pack.push(sub_index);
+                                self.tile_provider.load_tile(sub_index, self.style_id);
+                            }
+                        }
+                    }
                     Some(bundle) => {
-                        needed_tiles.push(DisplayedTile {
-                            index: *index,
+                        let tile = DisplayedTile {
+                            index,
                             bundle,
                             style_id: self.style_id,
                             opacity: 0.0,
                             displayed_at: now,
-                        });
-                        to_substitute.push(*index);
+                        };
+                        needed_tiles.push(tile);
+                        to_substitute.push(index);
                         requires_redraw = true;
                     }
                 }
             }
         }
+
+        self.tile_provider
+            .pack_tiles(&to_pack, self.style_id, canvas);
 
         let mut new_displayed = vec![];
         for displayed in displayed_tiles.iter() {
@@ -229,6 +249,8 @@ impl VectorTileLayer {
         }
 
         new_displayed.append(&mut needed_tiles);
+        new_displayed.sort_unstable_by_key(|tile| tile.index.z);
+        new_displayed.dedup_by(|a, b| a.index == b.index && a.style_id == b.style_id);
         *displayed_tiles = new_displayed;
 
         if requires_redraw {

@@ -11,6 +11,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#e1cec1",
+          "miter_limit": 1,
           "width": 1.6
         }
       },
@@ -23,6 +24,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#94c3f5",
+          "miter_limit": 1,
           "width": 1.0
         }
       },
@@ -35,6 +37,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#b0b0b0",
+          "miter_limit": 1,
           "width": 1.0
         }
       },
@@ -100,6 +103,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#dea73a",
+          "miter_limit": 1,
           "width": 1.0
         }
       },
@@ -121,6 +125,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#e8a343",
+          "miter_limit": 1,
           "width": 1.2
         }
       },
@@ -133,6 +138,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#d19046",
+          "miter_limit": 1,
           "width": 1.2
         }
       },
@@ -145,6 +151,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#c9a55b",
+          "miter_limit": 1,
           "width": 1.2
         }
       },
@@ -157,6 +164,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#b3801c",
+          "miter_limit": 1,
           "width": 1.5
         }
       },
@@ -169,6 +177,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#b3801c",
+          "miter_limit": 1,
           "width": 1.0
         }
       },
@@ -187,6 +196,7 @@
       "symbol": {
         "line": {
           "stroke_color": "#918f00",
+          "miter_limit": 1,
           "width": 1.5
         }
       },
@@ -196,17 +206,17 @@
     },
     {
       "properties": {
-          "rank": "1"
+        "rank": "1"
       },
       "symbol": {
         "label": {
           "pattern": "{name:en}",
           "text_style": {
-              "font_family": ["Hack"],
-              "font_size": 18,
-              "weight": 700,
-              "outline_width": 4,
-              "outline_color": "#ffffffff"
+            "font_family": ["Hack"],
+            "font_size": 18,
+            "weight": 700,
+            "outline_width": 4,
+            "outline_color": "#ffffffff"
           }
         }
       }
@@ -215,6 +225,7 @@
   "default_symbol": {
     "line": {
       "stroke_color": "#e0e0e0ff",
+      "miter_limit": 1,
       "width": 1.0
     },
     "polygon": {
