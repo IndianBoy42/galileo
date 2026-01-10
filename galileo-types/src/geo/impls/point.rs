@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::cartesian::Point2;
 use crate::geo::traits::point::{GeoPoint, NewGeoPoint};
 use crate::geo::traits::projection::Projection;
 use crate::geo::Datum;
@@ -33,6 +34,8 @@ impl NewGeoPoint<f64> for GeoPoint2d {
     }
 }
 
+const EARTH_RADIUS: f64 = 6371008.8; // WGS84 mean radius in meters
+
 impl GeoPoint2d {
     /// Creates a new from point from another.
     pub fn from(other: &impl GeoPoint<Num = f64>) -> Self {
@@ -44,13 +47,19 @@ impl GeoPoint2d {
 
     /// Add a offset defined in meters
     pub fn offset(self, dx: f64, dy: f64) -> Self {
-        const EARTH_RADIUS: f64 = 6371008.8; // WGS84 mean radius in meters
-
-        let delta_lat = dy / EARTH_RADIUS.to_degrees();
-        let delta_lon = dx / (EARTH_RADIUS * self.lat_rad().cos()).to_degrees();
+        let delta_lat = (dy / EARTH_RADIUS).to_degrees();
+        let delta_lon = (dx / (EARTH_RADIUS * self.lat_rad().cos())).to_degrees();
 
         Self::latlon(self.lat() + delta_lat, self.lon() + delta_lon)
     }
+    /// Get the cartesian offset from `self` to `other` in meters
+    pub fn get_offset_to(self, other: &GeoPoint2d) -> Point2 {
+        Point2::new(
+            (other.lon() - self.lon()).to_radians() * EARTH_RADIUS * self.lat_rad().cos(),
+            (other.lat() - self.lat()).to_radians() * EARTH_RADIUS,
+        )
+    }
+    // TODO: get_offset_accurate
     /// Add an offset defined in meters, more accurate for a larger distance using datum parameters
     pub fn offset_accurate(self, dx: f64, dy: f64, datum: &Datum) -> Self {
         let distance = (dx.powi(2) + dy.powi(2)).sqrt();
