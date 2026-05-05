@@ -2,11 +2,11 @@ use galileo_types::cartesian::Point3;
 use galileo_types::geometry::Geom;
 use galileo_types::{MultiPolygon, Polygon};
 
+use crate::Color;
 use crate::layer::feature_layer::symbol::Symbol;
 use crate::render::render_bundle::RenderBundle;
 use crate::render::{LineCap, LinePaint, PolygonPaint};
 use crate::view::MapView;
-use crate::Color;
 
 /// Renders a polygon geometry as a filled polygon with an outline.
 #[derive(Debug, Clone, Copy)]
@@ -85,6 +85,7 @@ impl SimplePolygonSymbol {
                 offset: self.stroke_offset,
                 line_cap: LineCap::Butt,
                 miter_limit: self.miter_limit,
+                dasharray: None,
             };
 
             for contour in polygon.iter_contours() {

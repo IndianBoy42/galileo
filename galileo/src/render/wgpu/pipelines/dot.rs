@@ -4,10 +4,10 @@ use wgpu::{
     VertexStepMode,
 };
 
+use crate::render::RenderOptions;
 use crate::render::render_bundle::world_set::PointInstance;
 use crate::render::wgpu::pipelines::{default_pipeline_descriptor, default_targets};
-use crate::render::wgpu::{DisplayInstance, WgpuDotBuffers, DEPTH_FORMAT};
-use crate::render::RenderOptions;
+use crate::render::wgpu::{DEPTH_FORMAT, DisplayInstance, WgpuDotBuffers};
 
 pub struct DotPipeline {
     wgpu_pipeline: RenderPipeline,
@@ -29,8 +29,8 @@ impl DotPipeline {
         let targets = default_targets(format);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[map_view_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(map_view_layout)],
+            immediate_size: 0,
         });
         let stencil_state = StencilFaceState {
             compare: CompareFunction::Equal,
@@ -49,8 +49,8 @@ impl DotPipeline {
         };
         let depth_stencil = Some(DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: CompareFunction::LessEqual,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(CompareFunction::LessEqual),
             stencil: StencilState {
                 front: stencil_state,
                 back: stencil_state,

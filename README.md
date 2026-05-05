@@ -10,17 +10,17 @@
 ![Feature layers](https://maximkaaa.github.io/galileo/countries_sm.png)
 ![Many points](https://maximkaaa.github.io/galileo/many_points.gif)
 
-* [Raster tile layer (OSM)](https://maximkaaa.github.io/galileo/raster_tiles/)
-* [Vector tile layer (Maplibre)](https://maximkaaa.github.io/galileo/vector_tiles/)
+* [Raster tile layer (OSM)](https://maximkaaa.github.io/galileo/web_examples/raster_tiles/)
+* [Vector tile layer (Maplibre)](https://maximkaaa.github.io/galileo/web_examples/vector_tiles/)
   * Use buttons at the top to change the style of the map
   * Click on any object to get information about it
-* [Feature layer](https://maximkaaa.github.io/galileo/feature_layers/)
+* [Feature layer](https://maximkaaa.github.io/galileo/web_examples/feature_layers/)
   * NOTE! Contains large dataset (~16 MB), might take some time to load
   * Draws 250 countries' borders, consisting of ~4000 polygons with ~500K vertices, plus 40K city points
   * Move mouse pointer to highlight any country, click on a country to write its name into console
-* [Map in Lambert Equal Area projection](https://maximkaaa.github.io/galileo/lambert/)
+* [Map in Lambert Equal Area projection](https://maximkaaa.github.io/galileo/web_examples/lambert/)
   * Takes data set (country borders) in Mercator projection and draws it to the map in LAEA projection
-* [Very many points](https://maximkaaa.github.io/galileo/many_points/)
+* [Very many points](https://maximkaaa.github.io/galileo/web_examples/many_points/)
   * Enjoy 3.6 million points heat up your room with GPU.
 
 # Overview
@@ -124,7 +124,10 @@ them all done at the same time. So here's our current plan and priorities:
 
 * [ ] Testing, documentation and examples
 
-\* Stabiliaing before v1.0 doesn't mean that API won't have any breaking changes at all, but rather that the API will be well thought through and tested and all the changes will be tracked, and if anything breaking is introduced, there will be clear instructions how to upgrade.
+\* Stabiliaing before v1.0 doesn't mean that API won't have any breaking
+changes at all, but rather that the API will be well thought through and tested
+and all the changes will be tracked, and if anything breaking is introduced,
+there will be clear instructions how to upgrade.
 
 # Running examples
 
@@ -137,7 +140,7 @@ Most of the Galileo examples can be run in browser. You will need to have `wasm_
 on your system:
 
 ```shell
-just web_example <example_name>
+just run_web_example <example_name>
 ```
 
 Then just open `localhost:8000` in your browser.
@@ -179,13 +182,13 @@ comes with additional advantages:
 * Increase development speed.
 * Make your needs our priority.
 * See your logo on the project's page.
-* 
+*
 
 ## Current sponsors
 
 [<img src="https://github.com/user-attachments/assets/6909ab5b-e5e3-461c-8d1e-e7abe32c0505" alt="Tzevet 5" width="200"/>](https://www.tzevet5.co.il/טכנולוגיות-אבטחה)
 
-Thank you [Ragarnoy](https://github.com/Ragarnoy), [Tzevet 5](https://www.tzevet5.co.il/טכנולוגיות-אבטחה), [quietlychris](https://github.com/quietlychris) for sponsoring Galileo!
+Thank you [Ragarnoy](https://github.com/Ragarnoy), [Tzevet 5](https://www.tzevet5.co.il/טכנולוגיות-אבטחה), [quietlychris](https://github.com/quietlychris), [DennisJensen95](https://github.com/DennisJensen95), [proglyk](https://github.com/proglyk) for sponsoring Galileo!
 
 ## Former sponsors
 
@@ -200,10 +203,19 @@ You can use this library without any worries as it is licensed under either of
 
 at your option.
 
+# Community
+
+Have a question, suggestion, idea or want to share something you created with Galileo? Open a discussion on Github or
+join our [discord server](https://discord.gg/6hkgSdAPmA).
+
 # Contributing
 
 Feature requests, pull requests, bug reports, comments, questions and discussion are welcome. Please, follow the code
 of conduct when contributing.
+
+Before pushing your changes, use `just check` command to make sure your code
+will pass CI checks. You will need `wasm32` target installed, rust nightly
+toolchain and `typos-cli` (`cargo install typos-cli`) tool.
 
 Note, that since the library is still in early stages of development, any part may change at any moment. So before
 starting any major undertaking with it or within it, open a discussion to sync your ideas with others' ideas.

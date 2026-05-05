@@ -1,12 +1,14 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+//! Galileo map widget for EGUI framework. See [`EguiMap`].
+
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use egui::load::SizedTexture;
 use egui::{Event, Image, ImageSource, Sense, TextureId, Ui, Vec2};
-use egui_wgpu::wgpu::{FilterMode, TextureView};
 use egui_wgpu::RenderState;
+use egui_wgpu::wgpu::{FilterMode, TextureView};
 use galileo::control::{
-    EventProcessor, MapController, MouseButton, RawUserEvent, UserEventHandler,
+    EventProcessor, MapController, MouseButton, RawUserEvent, TouchEvent, UserEventHandler,
 };
 use galileo::galileo_types::cartesian::{Point2, Size};
 use galileo::galileo_types::geo::impls::GeoPoint2d;
@@ -14,6 +16,62 @@ use galileo::layer::attribution::Attribution;
 use galileo::render::WgpuRenderer;
 use galileo::{Map, Messenger};
 
+use crate::EguiMapOptions;
+
+/// Galileo map widget for EGUI framework.
+///
+/// # Example
+///
+/// ```no_run
+/// use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
+/// use galileo::MapBuilder;
+/// use galileo_egui::{EguiMap, EguiMapState, EguiMapOptions};
+/// use galileo::galileo_types::latlon;
+/// use galileo::galileo_types::geo::impls::GeoPoint2d;
+///
+/// struct MapApp {
+///     pub map: EguiMapState,
+///     pub position: GeoPoint2d,
+///     pub resolution: f64,
+/// }
+///
+/// impl eframe::App for MapApp {
+///     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+///         egui::CentralPanel::default().show_inside(ui, |ui| {
+///             EguiMap::new(&mut self.map)
+///                 .with_position(&mut self.position)
+///                 .with_resolution(&mut self.resolution)
+///                 .show_ui(ui);
+///         });
+///     }
+/// }
+///
+/// let raster_layer = RasterTileLayerBuilder::new_osm()
+///     .build()
+///     .expect("failed to create layer");
+///
+/// let map = MapBuilder::default()
+///     .with_layer(raster_layer)
+///     .build();
+///
+/// let app_creator = move |cc: &eframe::CreationContext<'_>| {
+///     let ctx = cc.egui_ctx.clone();
+///     let render_state = cc
+///         .wgpu_render_state
+///         .clone()
+///         .expect("failed to get wgpu context");
+///     let egui_map_state = EguiMapState::new(map, ctx, render_state, [], EguiMapOptions::default());
+///     let app: Box<dyn eframe::App> = Box::new(MapApp {
+///         map: egui_map_state,
+///         position: latlon!(55.0, 37.0),
+///         resolution: 15000.0,
+///     });
+///
+///     Ok(app)
+/// };
+///
+/// eframe::run_native("Galileo Map in EGUI", eframe::NativeOptions::default(), Box::new(app_creator));
+/// ```
 pub struct EguiMap<'a> {
     state: &'a mut EguiMapState,
     position: Option<&'a mut GeoPoint2d>,
@@ -21,6 +79,7 @@ pub struct EguiMap<'a> {
 }
 
 impl<'a> EguiMap<'a> {
+    /// Creates a new instance of widget.
     pub fn new(state: &'a mut EguiMapState) -> Self {
         Self {
             state,
@@ -29,6 +88,10 @@ impl<'a> EguiMap<'a> {
         }
     }
 
+    /// Sets the position of the center of the map.
+    ///
+    /// If not specified, the center position will be controlled by the widget itself through user
+    /// controls.
     pub fn with_position(&'a mut self, position: &'a mut GeoPoint2d) -> &'a mut Self {
         let curr_view = self.state.map.view();
         if curr_view.position() != Some(*position) {
@@ -39,6 +102,9 @@ impl<'a> EguiMap<'a> {
         self
     }
 
+    /// Sets the resolution of the map.
+    ///
+    /// If not set, resolution will be controller by the user input.
     pub fn with_resolution(&'a mut self, resolution: &'a mut f64) -> &'a mut Self {
         let curr_view = self.state.map.view();
         if curr_view.resolution() != *resolution {
@@ -51,6 +117,9 @@ impl<'a> EguiMap<'a> {
         self
     }
 
+    /// Renders the map into the ui.
+    ///
+    /// The map will occupy all available space in the current panel.
     pub fn show_ui(&mut self, ui: &mut Ui) {
         self.state.render(ui);
 
@@ -59,14 +128,15 @@ impl<'a> EguiMap<'a> {
             **resolution = updated_view.resolution();
         }
 
-        if let Some(position) = &mut self.position {
-            if let Some(view_position) = updated_view.position() {
-                **position = view_position;
-            }
+        if let Some(position) = &mut self.position
+            && let Some(view_position) = updated_view.position()
+        {
+            **position = view_position;
         }
     }
 }
 
+/// State of the map widget.
 pub struct EguiMapState {
     map: Map,
     egui_render_state: RenderState,
@@ -75,14 +145,23 @@ pub struct EguiMapState {
     texture_id: TextureId,
     texture_view: TextureView,
     event_processor: EventProcessor,
+    messenger: MapStateMessenger,
+    map_ready: bool,
 }
 
 impl<'a> EguiMapState {
+    /// Creates a new instance of the state.
+    ///
+    /// Only one instance of the state should be created for the same map, as it controls internal
+    /// state of the map. Keep it inside your application state.
+    ///
+    /// You can add interactivity to the map by specifying event `handlers` the map will react to.
     pub fn new(
         mut map: Map,
         ctx: egui::Context,
         render_state: RenderState,
         handlers: impl IntoIterator<Item = Box<dyn UserEventHandler>>,
+        options: EguiMapOptions,
     ) -> Self {
         let requires_redraw = Arc::new(AtomicBool::new(true));
         let messenger = MapStateMessenger {
@@ -92,19 +171,22 @@ impl<'a> EguiMapState {
 
         map.set_messenger(Some(messenger.clone()));
         for layer in map.layers_mut().iter_mut() {
-            layer.set_messenger(Box::new(messenger.clone()));
+            layer.set_messenger(Arc::new(messenger.clone()));
         }
 
         // Set a default size so that render target can be created.
         // This size will be replaced by the UI on the first frame.
         let size = Size::new(1, 1);
         map.set_size(size.cast());
+        map.set_view(map.view().with_dpi_scale_factor(ctx.pixels_per_point()));
 
-        let renderer = WgpuRenderer::new_with_device_and_texture(
+        let mut renderer = WgpuRenderer::new_with_device_and_texture(
             render_state.device.clone(),
             render_state.queue.clone(),
             size,
         );
+        renderer.set_horizon_options(options.horizon_options);
+
         let texture = renderer
             .get_target_texture_view()
             .expect("failed to get map texture");
@@ -128,18 +210,25 @@ impl<'a> EguiMapState {
             texture_id,
             texture_view: texture,
             event_processor,
+            messenger,
+            map_ready: false,
         }
     }
 
+    /// Lets the map know that it should be rendered on the next render cycle.
     pub fn request_redraw(&self) {
         self.map.redraw();
     }
 
+    /// Renders the map into UI.
     pub fn render(&mut self, ui: &mut egui::Ui) {
-        let available_size = ui.available_size();
-        let map_size = self.renderer.size().cast::<f32>();
+        let logical_size = ui.available_size().floor();
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let physical_size = logical_size * pixels_per_point;
 
-        let (rect, response) = ui.allocate_exact_size(available_size, Sense::click_and_drag());
+        let (rect, response) = ui.allocate_exact_size(logical_size, Sense::click_and_drag());
+
+        let renderer_size = self.renderer.size().cast::<f32>();
 
         let attributions = self.collect_attributions();
         if attributions.is_some() {
@@ -153,15 +242,22 @@ impl<'a> EguiMapState {
                 });
         }
 
-        if self.event_processor.is_dragging() || response.contains_pointer() {
+        if self.event_processor.is_dragging() || response.hovered() {
             let events = ui.input(|input_state| input_state.events.clone());
             self.process_events(&events, [-rect.left(), -rect.top()]);
         }
 
         self.map.animate();
 
-        if available_size[0] != map_size.width() || available_size[1] != map_size.height() {
-            self.resize_map(available_size);
+        if physical_size[0] != renderer_size.width() || physical_size[1] != renderer_size.height() {
+            self.map_ready = true;
+            self.resize_map(logical_size, pixels_per_point);
+            self.map
+                .set_view(self.map.view().with_dpi_scale_factor(pixels_per_point));
+        }
+
+        if self.map_ready {
+            self.map.load_layers();
         }
 
         if self.requires_redraw.swap(false, Ordering::Relaxed) {
@@ -170,12 +266,12 @@ impl<'a> EguiMapState {
 
         Image::new(ImageSource::Texture(SizedTexture::new(
             self.texture_id,
-            Vec2::new(map_size.width(), map_size.height()),
+            Vec2::new(renderer_size.width(), renderer_size.height()),
         )))
         .paint_at(ui, rect);
     }
 
-    pub fn collect_attributions(&mut self) -> Option<Vec<Attribution>> {
+    fn collect_attributions(&mut self) -> Option<Vec<Attribution>> {
         let all_layer: Vec<Attribution> = self
             .map
             .layers()
@@ -196,7 +292,7 @@ impl<'a> EguiMapState {
         }
     }
 
-    pub fn show_attributions(&mut self, ui: &mut egui::Ui) {
+    fn show_attributions(&mut self, ui: &mut egui::Ui) {
         let attributions = self
             .collect_attributions()
             .expect("Failed to collect attributions");
@@ -211,18 +307,46 @@ impl<'a> EguiMapState {
         }
     }
 
+    /// Returns a reference to the Galileo map instance.
+    pub fn map(&'a self) -> &'a Map {
+        &self.map
+    }
+
+    /// Returns a mutable reference to the Galileo map instance.
     pub fn map_mut(&'a mut self) -> &'a mut Map {
         &mut self.map
     }
 
-    fn resize_map(&mut self, size: Vec2) {
-        log::trace!("Resizing map to size: {size:?}");
+    /// Returns event messenger that is used by the map.
+    pub fn messenger(&self) -> impl Messenger + use<> {
+        self.messenger.clone()
+    }
 
-        let size = Size::new(size.x as f64, size.y as f64);
-        self.map.set_size(size);
+    /// Returns a reference to the Galileo renderer.
+    pub fn renderer(&self) -> &WgpuRenderer {
+        &self.renderer
+    }
 
-        let size = Size::new(size.width() as u32, size.height() as u32);
-        self.renderer.resize(size);
+    /// Returns a mutable reference to the Galileo renderer.
+    pub fn renderer_mut(&mut self) -> &mut WgpuRenderer {
+        &mut self.renderer
+    }
+
+    fn resize_map(&mut self, logical_size: Vec2, pixels_per_point: f32) {
+        log::trace!(
+            "Resizing map to logical size: {logical_size:?}, pixels_per_point: {pixels_per_point}"
+        );
+
+        // Set the logical size for the map
+        let logical_size_f64 = Size::new(logical_size.x as f64, logical_size.y as f64);
+        self.map.set_size(logical_size_f64);
+
+        // Resize the renderer to physical size (accounting for pixel density)
+        let physical_size = Size::new(
+            (logical_size.x * pixels_per_point) as u32,
+            (logical_size.y * pixels_per_point) as u32,
+        );
+        self.renderer.resize(physical_size);
 
         // After renderer is resized, a new texture is created, so we need to update its id that we
         // use in UI.
@@ -230,15 +354,20 @@ impl<'a> EguiMapState {
             .renderer
             .get_target_texture_view()
             .expect("failed to get map texture");
+
+        // Use Linear filtering for better quality on HiDPI displays
+        let filter_mode = if pixels_per_point > 1.0 {
+            FilterMode::Linear
+        } else {
+            FilterMode::Nearest
+        };
+        log::info!("Using filter mode: {filter_mode:?}");
+
         let texture_id = self
             .egui_render_state
             .renderer
             .write()
-            .register_native_texture(
-                &self.egui_render_state.device,
-                &texture,
-                FilterMode::Nearest,
-            );
+            .register_native_texture(&self.egui_render_state.device, &texture, filter_mode);
 
         self.texture_id = texture_id;
         self.texture_view = texture;
@@ -286,13 +415,52 @@ impl<'a> EguiMapState {
                 );
                 Some(RawUserEvent::PointerMoved(pointer_position))
             }
+            #[cfg(not(target_arch = "wasm32"))]
             Event::MouseWheel { delta, .. } => {
                 let zoom = delta[1] as f64;
+
                 if zoom.abs() < 0.0001 {
                     return None;
                 }
 
                 Some(RawUserEvent::Scroll(zoom))
+            }
+            #[cfg(target_arch = "wasm32")]
+            Event::MouseWheel { delta, unit, .. } => {
+                // Winit produces different values in different browsers and they are all different
+                // from native platforms. See ttps://github.com/rust-windowing/winit/issues/22
+                //
+                // This hack is based on manual tests and might break in future. But this is the
+                // best I could come up with to mitigate the issue.
+                let zoom = match unit {
+                    egui::MouseWheelUnit::Point => delta[1] as f64 / 120.0,
+                    egui::MouseWheelUnit::Line => delta[1] as f64 / 6.0,
+                    egui::MouseWheelUnit::Page => delta[1] as f64,
+                };
+
+                if zoom.abs() < 0.0001 {
+                    return None;
+                }
+
+                Some(RawUserEvent::Scroll(zoom))
+            }
+            Event::Touch {
+                device_id: _,
+                id,
+                phase,
+                pos,
+                force: _,
+            } => {
+                let event = TouchEvent {
+                    touch_id: id.0,
+                    position: Point2::new(pos.x as f64, pos.y as f64),
+                };
+                match phase {
+                    egui::TouchPhase::Start => Some(RawUserEvent::TouchStart(event)),
+                    egui::TouchPhase::Move => Some(RawUserEvent::TouchMove(event)),
+                    egui::TouchPhase::End => Some(RawUserEvent::TouchEnd(event)),
+                    egui::TouchPhase::Cancel => Some(RawUserEvent::TouchEnd(event)),
+                }
             }
 
             _ => None,

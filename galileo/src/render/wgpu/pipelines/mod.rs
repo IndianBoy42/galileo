@@ -12,12 +12,12 @@ use wgpu::{
 
 use super::WgpuScreenSetData;
 use crate::decoded_image::{DecodedImage, DecodedImageType};
+use crate::render::RenderOptions;
 use crate::render::wgpu::pipelines::clip::ClipPipeline;
 use crate::render::wgpu::pipelines::dot::DotPipeline;
 use crate::render::wgpu::pipelines::image::ImagePipeline;
 use crate::render::wgpu::pipelines::map_ref::MapRefPipeline;
-use crate::render::wgpu::{ViewUniform, WgpuPackedBundle, DEPTH_FORMAT};
-use crate::render::RenderOptions;
+use crate::render::wgpu::{DEPTH_FORMAT, ViewUniform, WgpuPackedBundle};
 
 mod clip;
 mod dot;
@@ -30,6 +30,7 @@ pub struct Pipelines {
     map_view_binding: BindGroup,
     map_view_buffer: Buffer,
     map_view_binding_size: u64,
+    pub(crate) map_view_bind_group_layout: BindGroupLayout,
     texture_bind_group_layout: BindGroupLayout,
 
     image: ImagePipeline,
@@ -144,6 +145,7 @@ impl Pipelines {
             map_view_binding,
             map_view_binding_size: padded_size,
             map_view_buffer,
+            map_view_bind_group_layout: map_view_bind_group_layout.clone(),
             texture_bind_group_layout: texture_bind_group_layout.clone(),
             image: ImagePipeline::create(
                 device,
@@ -219,7 +221,7 @@ impl Pipelines {
         &self.screen_set_image
     }
 
-    fn set_bindings<'a>(&'a self, render_pass: &mut RenderPass<'a>) {
+    pub fn set_bindings<'a>(&'a self, render_pass: &mut RenderPass<'a>) {
         render_pass.set_bind_group(0, &self.map_view_binding, &[]);
     }
 
@@ -262,7 +264,7 @@ impl Pipelines {
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
-                    format: TextureFormat::Rgba8UnormSrgb,
+                    format: TextureFormat::Rgba8Unorm,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     label: None,
                     view_formats: &[],
@@ -271,7 +273,7 @@ impl Pipelines {
                 bytes,
             ),
             #[cfg(target_arch = "wasm32")]
-            DecodedImageType::JsImageBitmap(image) => {
+            DecodedImageType::JsImageBitmap { js_image, .. } => {
                 use wgpu::{CopyExternalImageSourceInfo, ExternalImageSource, Origin2d};
 
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -279,7 +281,7 @@ impl Pipelines {
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
-                    format: TextureFormat::Rgba8UnormSrgb,
+                    format: TextureFormat::Rgba8Unorm,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING
                         | wgpu::TextureUsages::COPY_DST
                         | wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -287,12 +289,12 @@ impl Pipelines {
                     view_formats: &[],
                 });
                 let texture_size = wgpu::Extent3d {
-                    width: image.width(),
-                    height: image.height(),
+                    width: js_image.width(),
+                    height: js_image.height(),
                     depth_or_array_layers: 1,
                 };
                 let image = CopyExternalImageSourceInfo {
-                    source: ExternalImageSource::ImageBitmap(image.clone()),
+                    source: ExternalImageSource::ImageBitmap(js_image.clone()),
                     origin: Origin2d::ZERO,
                     flip_y: false,
                 };
@@ -300,7 +302,7 @@ impl Pipelines {
                     &image,
                     texture
                         .as_image_copy()
-                        .to_tagged(wgpu::PredefinedColorSpace::Srgb, false),
+                        .to_tagged(wgpu::PredefinedColorSpace::DisplayP3, false),
                     texture_size,
                 );
 
@@ -316,7 +318,7 @@ impl Pipelines {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -339,7 +341,7 @@ impl Pipelines {
     }
 }
 
-fn default_targets(format: TextureFormat) -> [Option<wgpu::ColorTargetState>; 1] {
+pub(crate) fn default_targets(format: TextureFormat) -> [Option<wgpu::ColorTargetState>; 1] {
     [Some(wgpu::ColorTargetState {
         format,
         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -347,7 +349,7 @@ fn default_targets(format: TextureFormat) -> [Option<wgpu::ColorTargetState>; 1]
     })]
 }
 
-fn default_pipeline_descriptor<'a>(
+pub(crate) fn default_pipeline_descriptor<'a>(
     pipeline_layout: &'a PipelineLayout,
     shader: &'a ShaderModule,
     targets: &'a [Option<wgpu::ColorTargetState>],
@@ -387,8 +389,8 @@ fn default_pipeline_descriptor<'a>(
         },
         depth_stencil: Some(DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: false,
-            depth_compare: CompareFunction::Always,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(CompareFunction::Always),
             stencil: StencilState {
                 front: stencil_state,
                 back: stencil_state,
@@ -402,7 +404,7 @@ fn default_pipeline_descriptor<'a>(
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
-        multiview: None,
+        multiview_mask: None,
         cache: Default::default(),
     }
 }

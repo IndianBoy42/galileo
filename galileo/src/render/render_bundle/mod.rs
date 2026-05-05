@@ -1,8 +1,10 @@
 //! [`RenderBundle`] is used to store primitives and prepare them for rendering with the rendering backend.
 
+use std::sync::Arc;
+
+use galileo_types::Polygon;
 use galileo_types::cartesian::{CartesianPoint3d, Point2, Vector2};
 use galileo_types::contour::Contour;
-use galileo_types::Polygon;
 use num_traits::AsPrimitive;
 use screen_set::ScreenRenderSet;
 use serde::{Deserialize, Serialize};
@@ -29,6 +31,14 @@ impl RenderBundle {
     /// Creates a new empty bundle.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a new render bundle with the given DPI scale factor.
+    pub fn with_dpi_scale_factor(dpi_scale_factor: f32) -> Self {
+        Self {
+            world_set: WorldRenderSet::new(dpi_scale_factor),
+            screen_sets: Vec::new(),
+        }
     }
 
     /// Sets the anchor point for the bundle.
@@ -74,7 +84,7 @@ impl RenderBundle {
         view: &MapView,
     ) where
         N: AsPrimitive<f64>,
-        P: CartesianPoint3d<Num = N>,
+        P: CartesianPoint3d<Num = N> + Copy,
         C: Contour<Point = P>,
     {
         self.world_set.add_line(line, paint, min_resolution, view);
@@ -89,7 +99,7 @@ impl RenderBundle {
         view: &MapView,
     ) where
         N: AsPrimitive<f64>,
-        P: CartesianPoint3d<Num = N>,
+        P: CartesianPoint3d<Num = N> + Copy,
         Poly: Polygon,
         Poly::Contour: Contour<Point = P>,
     {

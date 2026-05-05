@@ -13,9 +13,6 @@ pub(crate) use text_service::TextService;
 
 use crate::render::text::text_service::FontServiceError;
 
-// #[cfg(feature = "cosmic-text")]
-// mod cosmic_text;
-
 #[cfg(feature = "rustybuzz")]
 mod rustybuzz;
 #[cfg(feature = "rustybuzz")]
@@ -122,6 +119,7 @@ pub trait TextRasterizer {
         style: &TextStyle,
         offset: Vector2<f32>,
         font_provider: &dyn FontProvider,
+        dpi_scale_factor: f32,
     ) -> Result<TextShaping, FontServiceError>;
 }
 
@@ -136,6 +134,23 @@ impl FontWeight {
     pub const BOLD: Self = FontWeight(700);
     /// Thin font.
     pub const THIN: Self = FontWeight(300);
+    /// Extra-light (200).
+    pub const EXTRA_LIGHT: Self = FontWeight(200);
+    /// Light (300).
+    pub const LIGHT: Self = FontWeight(300);
+    /// Medium (600).
+    pub const MEDIUM: Self = FontWeight(600);
+    /// Semi-bold (650).
+    pub const SEMI_BOLD: Self = FontWeight(650);
+    /// Extra-bold (800).
+    pub const EXTRA_BOLD: Self = FontWeight(800);
+    /// Black / Heavy (900).
+    pub const BLACK: Self = FontWeight(900);
+
+    /// Creates a `FontWeight` from a raw CSS-style numeric weight value (100–900).
+    pub fn new(value: u16) -> Self {
+        Self(value)
+    }
 }
 
 impl Default for FontWeight {
@@ -145,20 +160,15 @@ impl Default for FontWeight {
 }
 
 /// Font style.
-#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FontStyle {
     /// Normal font.
+    #[default]
     Normal,
     /// Italic font.
     Italic,
     /// Oblique font.
     Oblique,
-}
-
-impl Default for FontStyle {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Queryable properties of a font

@@ -8,22 +8,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use galileo_mvt::{MvtFeature, MvtGeometry};
-use galileo_types::cartesian::{CartesianPoint2d, Point2, Point3};
+use galileo_types::MultiPolygon;
+use galileo_types::cartesian::{CartesianPoint2d, Point2, Point3, Vector2};
 use galileo_types::geometry::CartesianGeometry2d;
 use galileo_types::impls::{ClosedContour, Polygon};
 use parking_lot::Mutex;
 pub use vector_tile::VectorTile;
 
+use crate::expr::{ColorExpr, EmptyExprFeature, ExprView};
+use crate::layer::Layer;
 use crate::layer::attribution::Attribution;
 use crate::layer::vector_tile_layer::style::VectorTileStyle;
 use crate::layer::vector_tile_layer::tile_provider::{VectorTileProvider, VtStyleId};
-use crate::layer::Layer;
 use crate::messenger::Messenger;
 use crate::render::render_bundle::RenderBundle;
-use crate::render::{Canvas, PackedBundle, PolygonPaint, RenderOptions};
+use crate::render::{BundleToDraw, Canvas, PackedBundle, PolygonPaint, RenderOptions};
 use crate::tile_schema::{TileIndex, TileSchema};
 use crate::view::MapView;
-use crate::Color;
 
 mod builder;
 pub mod style;
@@ -31,13 +32,17 @@ pub mod tile_provider;
 mod vector_tile;
 pub use builder::VectorTileLayerBuilder;
 
+use ordered_hash_map::OrderedHashMap;
+
+use super::tiles::{DisplayedTile, TilesContainer};
+
 /// Vector tile layers use [tile providers](VectorTileProvider) to load prepared vector tiles, and then render them using
 /// specified [styles](VectorTileStyle).
 pub struct VectorTileLayer {
     tile_provider: VectorTileProvider,
     tile_schema: TileSchema,
     style_id: VtStyleId,
-    displayed_tiles: Mutex<Vec<DisplayedTile>>,
+    displayed_tiles: TilesContainer<VtStyleId, VectorTileProvider>,
     prev_background: Mutex<Option<PreviousBackground>>,
     attribution: Option<Attribution>,
 }
@@ -51,25 +56,10 @@ impl std::fmt::Debug for VectorTileLayer {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 struct PreviousBackground {
-    color: Color,
+    color: ColorExpr,
     replaced_at: web_time::Instant,
-}
-
-#[derive(Clone)]
-struct DisplayedTile {
-    index: TileIndex,
-    bundle: Arc<dyn PackedBundle>,
-    style_id: VtStyleId,
-    opacity: f32,
-    displayed_at: web_time::Instant,
-}
-
-impl DisplayedTile {
-    fn is_opaque(&self) -> bool {
-        self.opacity >= 0.999
-    }
 }
 
 impl Layer for VectorTileLayer {
@@ -82,17 +72,23 @@ impl Layer for VectorTileLayer {
         };
 
         let mut requires_redraw = false;
-        let displayed_tiles = self.displayed_tiles.lock();
-        let to_render: Vec<(&dyn PackedBundle, f32)> = std::iter::once((&*background_bundle, 1.0))
-            .chain(displayed_tiles.iter().map(|v| {
-                if !v.is_opaque() {
-                    requires_redraw = true;
-                }
-                (&*v.bundle, v.opacity)
-            }))
-            .collect();
+        let displayed_tiles = self.displayed_tiles.tiles.lock();
+        let to_render: Vec<_> =
+            std::iter::once(BundleToDraw::with_opacity(&*background_bundle, 1.0))
+                .chain(displayed_tiles.values().filter_map(|v| {
+                    if !v.is_opaque() {
+                        requires_redraw = true;
+                    }
+                    let bbox = self.tile_schema.tile_bbox(v.index)?;
+                    Some(BundleToDraw::new(
+                        &*v.bundle,
+                        v.opacity,
+                        Vector2::new(bbox.x_min() as f32, bbox.y_max() as f32),
+                    ))
+                }))
+                .collect();
 
-        canvas.draw_bundles_with_opacity(&to_render, RenderOptions::default());
+        canvas.draw_bundles(&to_render, RenderOptions::default());
 
         if requires_redraw {
             self.tile_provider.request_redraw();
@@ -102,12 +98,12 @@ impl Layer for VectorTileLayer {
     fn prepare(&self, view: &MapView) {
         if let Some(iter) = self.tile_schema.iter_tiles(view) {
             for index in iter {
-                self.tile_provider.load_tile(index, self.style_id);
+                self.tile_provider.load_tile(index.into(), self.style_id);
             }
         }
     }
 
-    fn set_messenger(&mut self, messenger: Box<dyn Messenger>) {
+    fn set_messenger(&mut self, messenger: Arc<dyn Messenger>) {
         self.tile_provider.set_messenger(messenger);
     }
 
@@ -145,10 +141,10 @@ impl VectorTileLayer {
     ) -> Self {
         let style_id = tile_provider.add_style(style);
         Self {
-            tile_provider,
-            tile_schema,
+            tile_provider: tile_provider.clone(),
+            tile_schema: tile_schema.clone(),
             style_id,
-            displayed_tiles: Default::default(),
+            displayed_tiles: TilesContainer::new(tile_schema, tile_provider),
             prev_background: Default::default(),
             attribution,
         }
@@ -162,13 +158,13 @@ impl VectorTileLayer {
         let needed_indices: Vec<_> = tile_iter.collect();
         let mut to_pack = needed_indices.clone();
 
-        let mut displayed_tiles = self.displayed_tiles.lock();
+        let mut displayed_tiles = self.displayed_tiles.tiles.lock();
 
         let mut needed_tiles = Vec::with_capacity(needed_indices.len());
-        let mut to_substitute = vec![];
+        let mut to_substitute_bboxes = vec![];
 
         let now = web_time::Instant::now();
-        let fade_in_time = self.fade_in_time();
+        let fade_in_time = self.fade_in_duration();
         let mut requires_redraw = false;
 
         let mut indices_to_check = needed_indices.clone();
@@ -179,78 +175,92 @@ impl VectorTileLayer {
                 continue;
             }
 
-            if let Some(displayed) = displayed_tiles
-                .iter_mut()
-                .find(|displayed| displayed.index == index && displayed.style_id == self.style_id)
-            {
+            if let Some(mut displayed) = displayed_tiles.remove(&(index, self.style_id)) {
                 if !displayed.is_opaque() {
-                    to_substitute.push(index);
-                    displayed.opacity = ((now.duration_since(displayed.displayed_at)).as_secs_f64()
-                        / fade_in_time.as_secs_f64())
-                    .min(1.0) as f32;
+                    if let Some(bbox) = self.tile_schema.tile_bbox(index) {
+                        to_substitute_bboxes.push(bbox);
+                    }
+
+                    let fade_in_secs = fade_in_time.as_secs_f64();
+                    displayed.opacity = if fade_in_secs > 0.001 {
+                        ((now.duration_since(displayed.displayed_at)).as_secs_f64() / fade_in_secs)
+                            .min(1.0) as f32
+                    } else {
+                        1.0
+                    };
                     requires_redraw = true;
                 }
 
-                needed_tiles.push(displayed.clone());
+                needed_tiles.push(displayed);
             } else {
-                match self.tile_provider.get_tile(index, self.style_id) {
+                match self.tile_provider.get_tile(index.into(), self.style_id) {
                     None => {
-                        to_substitute.push(index);
+                        if let Some(bbox) = self.tile_schema.tile_bbox(index) {
+                            to_substitute_bboxes.push(bbox);
+                        }
                         if let Some(substitutes) = self.tile_schema.get_substitutes(index) {
                             for sub_index in substitutes {
                                 indices_to_check.push(sub_index);
                                 to_pack.push(sub_index);
-                                self.tile_provider.load_tile(sub_index, self.style_id);
+                                self.tile_provider.load_tile(sub_index.into(), self.style_id);
                             }
                         }
                     }
                     Some(bundle) => {
+                        let opacity = if fade_in_time.as_secs_f64() > 0.001 {
+                            0.0
+                        } else {
+                            1.0
+                        };
                         let tile = DisplayedTile {
                             index,
                             bundle,
                             style_id: self.style_id,
-                            opacity: 0.0,
+                            opacity,
                             displayed_at: now,
                         };
                         needed_tiles.push(tile);
-                        to_substitute.push(index);
+                        if let Some(bbox) = self.tile_schema.tile_bbox(index) {
+                            to_substitute_bboxes.push(bbox);
+                        }
                         requires_redraw = true;
                     }
                 }
             }
         }
 
+        let to_pack_indices: Vec<TileIndex> = to_pack.iter().map(|i| (*i).into()).collect();
         self.tile_provider
-            .pack_tiles(&to_pack, self.style_id, canvas);
+            .pack_tiles(&to_pack_indices, self.style_id, canvas);
 
-        let mut new_displayed = vec![];
-        for displayed in displayed_tiles.iter() {
-            if needed_tiles
-                .iter()
-                .any(|new| new.index == displayed.index && new.style_id == displayed.style_id)
-            {
-                continue;
-            }
+        let mut new_displayed = OrderedHashMap::new();
+        let mut selected = Vec::with_capacity(displayed_tiles.len());
 
-            let Some(displayed_bbox) = self.tile_schema.tile_bbox(displayed.index) else {
-                continue;
-            };
-
-            for subst in &to_substitute {
-                let Some(subst_bbox) = self.tile_schema.tile_bbox(*subst) else {
+        for subst_bbox in &to_substitute_bboxes {
+            for key in displayed_tiles.keys() {
+                let Some(displayed_bbox) = self.tile_schema.tile_bbox(key.0) else {
                     continue;
                 };
 
-                if displayed_bbox.intersects(subst_bbox) {
-                    new_displayed.push(displayed.clone());
-                    break;
+                if displayed_bbox.intersects(*subst_bbox) {
+                    selected.push(*key);
                 }
             }
+
+            for key in &selected {
+                let Some(tile) = displayed_tiles.remove(key) else {
+                    continue;
+                };
+
+                new_displayed.insert(*key, tile);
+            }
+
+            selected.clear();
         }
 
-        new_displayed.append(&mut needed_tiles);
-        new_displayed.sort_unstable_by_key(|tile| tile.index.z);
-        new_displayed.dedup_by(|a, b| a.index == b.index && a.style_id == b.style_id);
+        for tile in needed_tiles {
+            new_displayed.insert((tile.index, tile.style_id), tile);
+        }
         *displayed_tiles = new_displayed;
 
         if requires_redraw {
@@ -258,8 +268,12 @@ impl VectorTileLayer {
         }
     }
 
-    fn fade_in_time(&self) -> Duration {
-        Duration::from_millis(300)
+    fn fade_in_duration(&self) -> Duration {
+        self.displayed_tiles.fade_in_duration()
+    }
+
+    fn set_fade_in_duration(&mut self, fade_in_duration: Duration) {
+        self.displayed_tiles.set_fade_in_duration(fade_in_duration);
     }
 
     /// Change style of the layer and redraw it.
@@ -267,7 +281,7 @@ impl VectorTileLayer {
         let new_style_id = self.tile_provider.add_style(style);
         if let Some(curr_style) = self.tile_provider.get_style(self.style_id) {
             *self.prev_background.lock() = Some(PreviousBackground {
-                color: curr_style.background,
+                color: curr_style.background.clone(),
                 replaced_at: web_time::Instant::now(),
             });
         }
@@ -281,12 +295,21 @@ impl VectorTileLayer {
         point: &impl CartesianPoint2d<Num = f64>,
         view: &MapView,
     ) -> Vec<(String, MvtFeature)> {
+        const PIXEL_TOLERANCE: f64 = 2.0;
+        let view_resolution = view.resolution();
+        let res_tolerance = view_resolution * PIXEL_TOLERANCE;
+
         let mut features = vec![];
         if let Some(iter) = self.tile_schema.iter_tiles(view) {
             for index in iter {
                 let Some(tile_bbox) = self.tile_schema.tile_bbox(index) else {
                     continue;
                 };
+
+                if !tile_bbox.shrink(-res_tolerance).contains(point) {
+                    continue;
+                }
+
                 let Some(lod_resolution) = self.tile_schema.lod_resolution(index.z) else {
                     continue;
                 };
@@ -298,9 +321,9 @@ impl VectorTileLayer {
                     ((tile_bbox.y_max() - point.y()) / tile_resolution) as f32,
                 );
 
-                let tolerance = (view.resolution() / tile_resolution) as f32 * 2.0;
+                let tolerance = ((view.resolution() / tile_resolution) * PIXEL_TOLERANCE) as f32;
 
-                if let Some(mvt_tile) = self.tile_provider.get_mvt_tile(index) {
+                if let Some(mvt_tile) = self.tile_provider.get_mvt_tile(index.into()) {
                     for layer in &mvt_tile.layers {
                         for feature in &layer.features {
                             match &feature.geometry {
@@ -313,16 +336,13 @@ impl VectorTileLayer {
                                     }
                                 }
                                 MvtGeometry::LineString(contours) => {
-                                    if contours
-                                        .iter()
-                                        .any(|c| c.is_point_inside(&tile_point, tolerance))
-                                    {
+                                    if contours.is_point_inside(&tile_point, tolerance) {
                                         features.push((layer.name.clone(), feature.clone()));
                                     }
                                 }
                                 MvtGeometry::Polygon(polygons) => {
                                     if polygons
-                                        .iter()
+                                        .polygons()
                                         .any(|p| p.is_point_inside(&tile_point, tolerance))
                                     {
                                         features.push((layer.name.clone(), feature.clone()));
@@ -343,7 +363,7 @@ impl VectorTileLayer {
         view: &MapView,
         canvas: &mut dyn Canvas,
     ) -> Option<Box<dyn PackedBundle>> {
-        let mut bundle = RenderBundle::default();
+        let mut bundle = RenderBundle::with_dpi_scale_factor(view.dpi_scale_factor());
         let bbox = view.get_bbox()?;
         let bounds = Polygon::new(
             ClosedContour::new(vec![
@@ -356,26 +376,30 @@ impl VectorTileLayer {
         );
         let style = self.tile_provider.get_style(self.style_id)?;
 
+        let lod = self.tile_schema.select_lod(view.resolution())?;
+        let expr_view = ExprView {
+            resolution: lod.resolution,
+            z_index: Some(lod.z_index),
+        };
+
         let mut prev_background = self.prev_background.lock();
-        let color = match *prev_background {
+        let new_color = style.background.eval(&EmptyExprFeature, expr_view)?;
+        let color = match &*prev_background {
             Some(prev) => {
                 let k = web_time::Instant::now()
                     .duration_since(prev.replaced_at)
                     .as_secs_f32()
-                    / self.fade_in_time().as_secs_f32();
+                    / self.fade_in_duration().as_secs_f32();
 
                 if k >= 1.0 {
                     *prev_background = None;
-                    style.background
+                    new_color
                 } else {
-                    prev.color.blend(
-                        style
-                            .background
-                            .with_alpha((style.background.a() as f32 * k) as u8),
-                    )
+                    let prev_color = prev.color.eval(&EmptyExprFeature, expr_view)?;
+                    prev_color.blend(new_color.with_alpha((new_color.a() as f32 * k) as u8))
                 }
             }
-            None => style.background,
+            None => new_color,
         };
 
         bundle.add_polygon(&bounds, &PolygonPaint { color }, view.resolution(), view);
@@ -394,9 +418,10 @@ mod tests {
     use super::*;
     use crate::platform::native::vt_processor::ThreadVtProcessor;
     use crate::tests::TestTileLoader;
+    use crate::tile_schema::TileSchemaBuilder;
 
     fn test_layer() -> VectorTileLayer {
-        let tile_schema = TileSchema::web(18);
+        let tile_schema = TileSchemaBuilder::web_mercator(0..=18).build().unwrap();
         let mut provider = VectorTileProvider::new(
             Arc::new(TestTileLoader {}),
             Arc::new(ThreadVtProcessor::new(tile_schema.clone())),
@@ -404,10 +429,10 @@ mod tests {
 
         let style_id = provider.add_style(VectorTileStyle::default());
         VectorTileLayer {
-            tile_provider: provider,
-            tile_schema: TileSchema::web(18),
+            tile_provider: provider.clone(),
+            tile_schema: TileSchemaBuilder::web_mercator(0..18).build().unwrap(),
             style_id,
-            displayed_tiles: Default::default(),
+            displayed_tiles: TilesContainer::new(tile_schema, provider),
             prev_background: Default::default(),
             attribution: None,
         }

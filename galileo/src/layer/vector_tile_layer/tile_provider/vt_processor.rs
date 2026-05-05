@@ -1,17 +1,20 @@
-use galileo_mvt::{MvtFeature, MvtGeometry, MvtTile};
-use galileo_types::cartesian::{CartesianPoint2d, CartesianPoint3d, Point2, Point3, Rect, Vector2};
+use either::Either;
+use galileo_mvt::{MvtFeature, MvtGeometry, MvtLayer, MvtPolygon, MvtTile};
+use galileo_types::cartesian::{CartesianPoint2d, Point3, Rect, Vector2};
 use galileo_types::impls::{ClosedContour, Polygon};
-use galileo_types::Contour;
+use galileo_types::{Contour, MultiContour, MultiPolygon, Polygon as PolygonTrait};
 use num_traits::ToPrimitive;
 use regex::Regex;
 
+use crate::TileSchema;
 use crate::error::GalileoError;
-use crate::layer::vector_tile_layer::style::{VectorTileLabelSymbol, VectorTileStyle};
+use crate::expr::ExprView;
+use crate::layer::vector_tile_layer::style::{StyleRule, VectorTileLabelSymbol, VectorTileStyle};
 use crate::render::point_paint::{PointPaint, PointShape};
 use crate::render::render_bundle::RenderBundle;
 use crate::render::{LinePaint, PolygonPaint};
 use crate::tile_schema::TileIndex;
-use crate::{MapView, TileSchema};
+use crate::view::MapView;
 
 /// Data processor that decodes vector tiles.
 pub struct VtProcessor {}
@@ -28,6 +31,21 @@ pub struct VectorTileDecodeContext {
     pub bundle: RenderBundle,
 }
 
+fn get_rule_layers<'a>(
+    rule: &StyleRule,
+    all_rules: &'a [StyleRule],
+    layers: &'a [MvtLayer],
+) -> impl Iterator<Item = &'a MvtLayer> {
+    match &rule.layer_name {
+        Some(layer_name) => Either::Left(layers.iter().find(|l| &l.name == layer_name).into_iter()),
+        None => Either::Right(layers.iter().filter(|l| {
+            !all_rules
+                .iter()
+                .any(|r| r.layer_name.as_ref() == Some(&l.name))
+        })),
+    }
+}
+
 impl VtProcessor {
     /// Pre-render the given tile into the given `bundle`.
     pub fn prepare(
@@ -37,13 +55,15 @@ impl VtProcessor {
         style: &VectorTileStyle,
         tile_schema: &TileSchema,
     ) -> Result<(), GalileoError> {
-        let bbox = tile_schema
-            .tile_bbox(index)
-            .ok_or_else(|| GalileoError::Generic("cannot get tile bbox".into()))?;
         let lod_resolution = tile_schema.lod_resolution(index.z).ok_or_else(|| {
             GalileoError::Generic(format!("cannot get lod resolution for lod {}", index.z))
         })?;
         let tile_resolution = lod_resolution * tile_schema.tile_width() as f64;
+
+        let width = tile_schema.tile_width() as f64;
+        let height = tile_schema.tile_height() as f64;
+        let bbox = Rect::new(0.0, 0.0, width * lod_resolution, -height * lod_resolution);
+
         let tile_center = bbox.center();
         bundle.set_anchor([tile_center.x(), tile_center.y(), 0.0]);
 
@@ -60,71 +80,82 @@ impl VtProcessor {
         );
         bundle.world_set.clip_area(&bounds, &view);
 
-        for layer in mvt_tile.layers.iter().rev() {
-            for feature in &layer.features {
-                match &feature.geometry {
-                    MvtGeometry::Point(points) => {
-                        let Some(paint) = Self::get_point_symbol(style, &layer.name, feature)
-                        else {
-                            continue;
-                        };
+        for rule in &style.rules {
+            if rule.max_resolution.is_some_and(|v| v < lod_resolution) {
+                continue;
+            }
 
-                        for point in points {
-                            let position = Self::transform_point(point, bbox, tile_resolution);
-                            if !bbox.contains(&Point2::new(position.x(), position.y())) {
-                                // Some vector tiles add out-of-bounds point to start displaying labels that
-                                // are not fully on the screen yet. We need to deal with that case
-                                // in some clever way, but for now let's ignore those points.
+            if rule.min_resolution.is_some_and(|v| v > lod_resolution) {
+                continue;
+            }
+
+            for layer in get_rule_layers(rule, &style.rules, &mvt_tile.layers) {
+                for feature in &layer.features {
+                    if !rule.applies(feature, tile_resolution, index.z) {
+                        continue;
+                    }
+
+                    let expr_view = ExprView {
+                        resolution: lod_resolution,
+                        z_index: Some(index.z),
+                    };
+
+                    match &feature.geometry {
+                        MvtGeometry::Point(points) => {
+                            let Some(paint) = Self::get_point_symbol(rule, feature, expr_view)
+                            else {
                                 continue;
-                            }
+                            };
 
-                            match &paint.shape {
-                                PointShape::Label { text, style } => {
-                                    bundle.add_label(
-                                        &position,
-                                        text,
-                                        style,
-                                        Vector2::default(),
+                            for point in points {
+                                let position = Self::transform_point(point, tile_resolution);
+                                match &paint.shape {
+                                    PointShape::Label { text, style } => {
+                                        if !text.is_empty() {
+                                            bundle.add_label(
+                                                &position,
+                                                text,
+                                                style,
+                                                Vector2::default(),
+                                                &view,
+                                            );
+                                        }
+                                    }
+                                    _ => {
+                                        bundle.add_point(&position, &paint, lod_resolution, &view);
+                                    }
+                                }
+                            }
+                        }
+                        MvtGeometry::LineString(contours) => {
+                            if let Some(paint) = Self::get_line_symbol(rule, feature, expr_view) {
+                                for contour in contours.contours() {
+                                    bundle.add_line(
+                                        &galileo_types::impls::Contour::new(
+                                            contour
+                                                .iter_points()
+                                                .map(|p| Self::transform_point(&p, tile_resolution))
+                                                .collect(),
+                                            false,
+                                        ),
+                                        &paint,
+                                        lod_resolution,
                                         &view,
                                     );
                                 }
-                                _ => {
-                                    bundle.add_point(&position, &paint, lod_resolution, &view);
+                            }
+                        }
+                        MvtGeometry::Polygon(polygons) => {
+                            if let Some(paint) = Self::get_polygon_symbol(rule, feature, expr_view)
+                            {
+                                for polygon in polygons.polygons() {
+                                    bundle.add_polygon(
+                                        &Self::transform_polygon(polygon, tile_resolution),
+                                        &paint,
+                                        lod_resolution,
+                                        &view,
+                                    );
                                 }
-                            }
-                        }
-                    }
-                    MvtGeometry::LineString(contours) => {
-                        if let Some(paint) = Self::get_line_symbol(style, &layer.name, feature) {
-                            for contour in contours {
-                                bundle.add_line(
-                                    &galileo_types::impls::Contour::new(
-                                        contour
-                                            .iter_points()
-                                            .map(|p| {
-                                                Self::transform_point(p, bbox, tile_resolution)
-                                            })
-                                            .collect(),
-                                        false,
-                                    ),
-                                    &paint,
-                                    lod_resolution,
-                                    &view,
-                                );
-                            }
-                        }
-                    }
-                    MvtGeometry::Polygon(polygons) => {
-                        if let Some(paint) = Self::get_polygon_symbol(style, &layer.name, feature) {
-                            for polygon in polygons {
-                                bundle.add_polygon(
-                                    &polygon.cast_points(|p| {
-                                        Self::transform_point(p, bbox, tile_resolution)
-                                    }),
-                                    &paint,
-                                    lod_resolution,
-                                    &view,
-                                );
                             }
                         }
                     }
@@ -136,41 +167,24 @@ impl VtProcessor {
     }
 
     fn get_point_symbol<'a>(
-        style: &'a VectorTileStyle,
-        layer_name: &str,
+        rule: &'a StyleRule,
         feature: &MvtFeature,
+        view: ExprView,
     ) -> Option<PointPaint<'a>> {
-        style
-            .get_style_rule(layer_name, feature)
-            .and_then(|rule| {
-                rule.symbol
-                    .point()
-                    .copied()
-                    .map(|symbol| symbol.into())
-                    .or_else(|| {
-                        rule.symbol
-                            .label()
-                            .and_then(|symbol| Self::format_label(symbol, feature))
-                    })
-            })
+        rule.symbol
+            .point()
+            .and_then(|symbol| symbol.to_paint(feature, view))
             .or_else(|| {
-                style
-                    .default_symbol
-                    .point
-                    .map(|symbol| symbol.into())
-                    .or_else(|| {
-                        style
-                            .default_symbol
-                            .label
-                            .as_ref()
-                            .and_then(|symbol| Self::format_label(symbol, feature))
-                    })
+                rule.symbol
+                    .label()
+                    .and_then(|symbol| Self::format_label(symbol, feature, view))
             })
     }
 
     fn format_label<'a>(
         label_symbol: &VectorTileLabelSymbol,
         feature: &MvtFeature,
+        view: ExprView,
     ) -> Option<PointPaint<'a>> {
         let re = Regex::new("\\{(?<name>.+)}").ok()?;
         let mut text = label_symbol.pattern.to_string();
@@ -182,45 +196,56 @@ impl VtProcessor {
                 .map(|v| v.to_string())
                 .unwrap_or_default();
 
-            text = text.replace(&format!("{{{}}}", prop_name), &prop);
+            text = text.replace(&format!("{{{prop_name}}}"), &prop);
         }
         Some(PointPaint::label_owned(
             text,
-            label_symbol.text_style.clone(),
+            label_symbol.text_style.clone().get_value(feature, view)?,
         ))
     }
 
-    fn get_line_symbol(
-        style: &VectorTileStyle,
-        layer_name: &str,
-        feature: &MvtFeature,
-    ) -> Option<LinePaint> {
-        style
-            .get_style_rule(layer_name, feature)
-            .and_then(|rule| rule.symbol.line().copied())
-            .or(style.default_symbol.line)
-            .map(|symbol| symbol.into())
+    fn get_line_symbol<'a>(
+        rule: &'a StyleRule,
+        feature: &'a MvtFeature,
+        view: ExprView,
+    ) -> Option<LinePaint<'a>> {
+        rule.symbol.line().and_then(|s| s.to_paint(feature, view))
     }
 
     fn get_polygon_symbol(
-        style: &VectorTileStyle,
-        layer_name: &str,
+        rule: &StyleRule,
         feature: &MvtFeature,
+        view: ExprView,
     ) -> Option<PolygonPaint> {
-        style
-            .get_style_rule(layer_name, feature)
-            .and_then(|rule| rule.symbol.polygon().copied())
-            .or(style.default_symbol.polygon)
-            .map(|symbol| symbol.into())
+        rule.symbol
+            .polygon()
+            .and_then(|s| s.to_paint(feature, view))
+    }
+
+    fn transform_polygon(mvt_polygon: &MvtPolygon, tile_resolution: f64) -> Polygon<Point3> {
+        let cast = |p| Self::transform_point(&p, tile_resolution);
+
+        Polygon {
+            outer_contour: ClosedContour::new(
+                mvt_polygon
+                    .outer_contour()
+                    .iter_points()
+                    .map(&cast)
+                    .collect(),
+            ),
+            inner_contours: mvt_polygon
+                .inner_contours()
+                .map(|c| ClosedContour::new(c.iter_points().map(&cast).collect()))
+                .collect(),
+        }
     }
 
     fn transform_point<Num: num_traits::Float + ToPrimitive>(
         p_in: &impl CartesianPoint2d<Num = Num>,
-        tile_bbox: Rect,
         tile_resolution: f64,
     ) -> Point3 {
-        let x = tile_bbox.x_min() + p_in.x().to_f64().expect("double overflow") * tile_resolution;
-        let y = tile_bbox.y_max() - p_in.y().to_f64().expect("double overflow") * tile_resolution;
+        let x = p_in.x().to_f64().expect("double overflow") * tile_resolution;
+        let y = -p_in.y().to_f64().expect("double overflow") * tile_resolution;
         Point3::new(x, y, 0.0)
     }
 }

@@ -7,9 +7,9 @@
 //! data should probably be preprocessed, as many of those 19M points have virtually the same coordinate. These
 //! optimizations may be done by Galileo in future, but at this point it's up to the application.
 
+use galileo::layer::FeatureLayer;
 use galileo::layer::feature_layer::{Feature, FeatureLayerOptions};
 use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
-use galileo::layer::FeatureLayer;
 use galileo::render::point_paint::PointPaint;
 use galileo::render::render_bundle::RenderBundle;
 use galileo::symbol::Symbol;
@@ -26,7 +26,9 @@ fn main() {
 }
 
 pub(crate) fn run() {
-    galileo_egui::init(create_map(), []).expect("failed to initialize");
+    galileo_egui::InitBuilder::new(create_map())
+        .init()
+        .expect("failed to initialize");
 }
 
 fn load_points() -> Vec<ColoredPoint> {

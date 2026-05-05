@@ -7,13 +7,13 @@ use galileo_types::cartesian::{Point2, Size, Vector2};
 use galileo_types::impls::ClosedContour;
 use serde::{Deserialize, Serialize};
 
+use crate::Color;
 use crate::decoded_image::DecodedImage;
 use crate::render::text::TextStyle;
 use crate::render::{LineCap, LinePaint};
-use crate::Color;
 
 /// Specifies the way a point should be drawn to the map.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PointPaint<'a> {
     pub(crate) shape: PointShape<'a>,
     pub(crate) offset: Vector2<f32>,
@@ -36,13 +36,15 @@ impl<'a> PointPaint<'a> {
     pub fn sector(color: Color, diameter: f32, start_angle: f32, end_angle: f32) -> Self {
         Self {
             offset: Vector2::default(),
-            shape: PointShape::Sector(SectorParameters {
-                fill: color.into(),
-                radius: diameter / 2.0,
-                start_angle,
-                end_angle,
+            shape: PointShape::Sector {
+                parameters: SectorParameters {
+                    fill: color.into(),
+                    radius: diameter / 2.0,
+                    start_angle,
+                    end_angle,
+                },
                 outline: None,
-            }),
+            },
         }
     }
 
@@ -86,7 +88,7 @@ impl<'a> PointPaint<'a> {
     }
 
     /// Creates a paint that draws given text label with the specified style.
-    pub fn label(text: &'a String, style: &'a TextStyle) -> Self {
+    pub fn label(text: &'a str, style: &'a TextStyle) -> Self {
         Self {
             offset: Vector2::default(),
             shape: PointShape::Label {
@@ -119,6 +121,7 @@ impl<'a> PointPaint<'a> {
                     offset: 0.0,
                     line_cap: LineCap::Round,
                     miter_limit: 1.0,
+                    dasharray: None,
                 })
             }
             _ => {}
@@ -140,8 +143,7 @@ impl<'a> PointPaint<'a> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone)]
 pub(crate) enum PointShape<'a> {
     Dot {
         color: Color,
@@ -149,23 +151,26 @@ pub(crate) enum PointShape<'a> {
     Circle {
         fill: CircleFill,
         radius: f32,
-        outline: Option<LinePaint>,
+        outline: Option<LinePaint<'a>>,
     },
-    Sector(SectorParameters),
+    Sector {
+        parameters: SectorParameters,
+        outline: Option<LinePaint<'a>>,
+    },
     Square {
         fill: Color,
         size: f32,
-        outline: Option<LinePaint>,
+        outline: Option<LinePaint<'a>>,
     },
     FreeShape {
         fill: Color,
         scale: f32,
-        outline: Option<LinePaint>,
+        outline: Option<LinePaint<'a>>,
         shape: Cow<'a, ClosedContour<Point2<f32>>>,
         rotation: f32,
     },
     Label {
-        text: Cow<'a, String>,
+        text: Cow<'a, str>,
         style: Cow<'a, TextStyle>,
     },
 }
@@ -184,13 +189,12 @@ pub enum MarkerStyle {
     },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub(crate) struct SectorParameters {
     pub fill: CircleFill,
     pub radius: f32,
     pub start_angle: f32,
     pub end_angle: f32,
-    pub outline: Option<LinePaint>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

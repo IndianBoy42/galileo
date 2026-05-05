@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use galileo::control::{EventPropagation, UserEvent, UserEventHandler};
-use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
 use galileo::layer::FeatureLayer;
+use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
 use galileo::symbol::CirclePointSymbol;
 use galileo::{Color, Map, MapBuilder};
 use galileo_types::cartesian::Point2;
@@ -25,11 +25,10 @@ pub(crate) fn run() {
     );
     let layer = Arc::new(RwLock::new(layer));
     let handler = create_mouse_handler(layer.clone());
-    galileo_egui::init(
-        create_map(layer),
-        [Box::new(handler) as Box<dyn UserEventHandler>],
-    )
-    .expect("failed to initialize");
+    galileo_egui::InitBuilder::new(create_map(layer))
+        .with_handlers([Box::new(handler) as Box<dyn UserEventHandler>])
+        .init()
+        .expect("failed to initialize");
 }
 
 fn create_mouse_handler(

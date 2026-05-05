@@ -1,0 +1,505 @@
+use galileo::Color;
+use galileo::expr::{
+    ColorExpr, ControlPoint, ExponentialInterpolation, Expr, ExprValue, WithOpacityExpr,
+};
+use galileo::galileo_types::cartesian::{CartesianPoint2d, Point2, Rect};
+use galileo::galileo_types::geo::impls::GeoPoint2d;
+use galileo::galileo_types::geo::{Crs, NewGeoPoint, Projection};
+use galileo::layer::VectorTileLayer;
+use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
+use galileo::layer::vector_tile_layer::style::{
+    StyleRule, VectorTileLabelSymbol, VectorTileLineSymbol, VectorTilePolygonSymbol,
+    VectorTileStyle, VectorTileSymbol, VtTextStyle,
+};
+use galileo::render::text::{FontStyle, FontWeight, HorizontalAlignment, VerticalAlignment};
+use galileo::tile_schema::{TileSchema, TileSchemaBuilder, VerticalDirection};
+use serde::Deserialize;
+
+use crate::layer::{UNSUPPORTED, log_unsupported_field};
+use crate::style::color::MlColor;
+use crate::style::layer::symbol::SymbolPlacement;
+use crate::style::layer::{FillLayer, Layer as MaplibreStyleLayer, LineLayer, SymbolLayer};
+use crate::style::source::{TileScheme, VectorSource};
+use crate::style::value::{FunctionStop, FunctionType, MlStyleValue};
+
+/// Tries to create a [`VectorTileLayer`] from a Maplibre vector source and the style layers that
+/// reference it. Returns `None` if the source cannot be used (e.g. no tile URLs available).
+pub fn try_create(
+    source_name: &str,
+    source: &VectorSource,
+    layers: &[&MaplibreStyleLayer],
+) -> Option<VectorTileLayer> {
+    let tile_urls = match source.tiles.as_deref() {
+        Some([_, ..]) => source.tiles.clone().unwrap(),
+        _ => {
+            log::debug!(
+                "{UNSUPPORTED} Vector source '{source_name}' has no tile URLs; skipping. \
+                 Open a GitHub issue or PR if support is desirable."
+            );
+            return None;
+        }
+    };
+
+    let tile_schema = build_tile_schema(source)?;
+
+    let rules = build_rules(layers, &tile_schema);
+    let background = get_background(layers);
+    let style = VectorTileStyle { rules, background };
+
+    VectorTileLayerBuilder::new_rest(move |index| {
+        // When multiple URLs are provided they are equivalent mirrors; balance across them
+        // using (x + y) mod n, which distributes evenly and is stable per tile.
+        let url = &tile_urls[(index.x + index.y).rem_euclid(tile_urls.len() as i32) as usize];
+        url.replace("{z}", &index.z.to_string())
+            .replace("{x}", &index.x.to_string())
+            .replace("{y}", &index.y.to_string())
+    })
+    .with_tile_schema(tile_schema)
+    .with_style(style)
+    .with_fade_in_duration(Default::default())
+    .build()
+    .ok()
+}
+
+/// Finds background layer and returns its color.
+///
+/// Maptiler supports having background layer in any position, and just adds filling of the
+/// entire tile. WE don't support this currently, and always put background at the back.
+fn get_background(layers: &[&MaplibreStyleLayer]) -> ColorExpr {
+    const DEFAULT_TILE_BACKGROUND: ColorExpr =
+        ColorExpr::new(Expr::Value(ExprValue::Color(Color::TRANSPARENT)));
+
+    let layer = match layers {
+        [] => return DEFAULT_TILE_BACKGROUND,
+        [MaplibreStyleLayer::Background(layer), ..] => layer,
+        layers => {
+            let bg_layer = layers.iter().find_map(|l| {
+                if let MaplibreStyleLayer::Background(background) = l {
+                    Some(background)
+                } else {
+                    None
+                }
+            });
+
+            if let Some(layer) = bg_layer {
+                log::debug!(
+                    "{UNSUPPORTED} Background layer '{}' is in not the first layer in the list. \
+                    This is not yet supported. Background will be applied to the bottom of the tile.",
+                    layer.id,
+                );
+
+                layer
+            } else {
+                return DEFAULT_TILE_BACKGROUND;
+            }
+        }
+    };
+
+    get_color_value(
+        &layer.paint.background_color,
+        Some(&layer.paint.background_opacity),
+    )
+    .map(Into::into)
+    .unwrap_or(DEFAULT_TILE_BACKGROUND)
+}
+
+fn get_color_value(
+    color: &MlStyleValue<MlColor>,
+    opacity: Option<&MlStyleValue<f64>>,
+) -> Option<Expr> {
+    let galileo_color = get_galileo_value(color)?;
+    let galileo_opacity = opacity.map(|v| get_galileo_value(v).unwrap_or(1.0.into()));
+
+    Some(match galileo_opacity {
+        Some(v) => Expr::WithOpacity(WithOpacityExpr {
+            color: Box::new(galileo_color),
+            opacity: Box::new(v),
+        }),
+        None => galileo_color,
+    })
+}
+
+fn get_galileo_value<T: Clone + Default + std::fmt::Debug>(value: &MlStyleValue<T>) -> Option<Expr>
+where
+    for<'de> FunctionStop<T>: Deserialize<'de>,
+    ExprValue<'static>: From<T>,
+{
+    match value {
+        MlStyleValue::Literal(v) => Some(Expr::Value(ExprValue::from(v.clone()))),
+        MlStyleValue::Expression(expr) => expr.to_galileo_expr(),
+        MlStyleValue::Function(function) => {
+            let control_points = function
+                .stops
+                .iter()
+                .map(|stop| ControlPoint {
+                    input: stop.input.into(),
+                    output: ExprValue::from(stop.output.clone()).into(),
+                })
+                .collect();
+
+            if let Some(function_type) = function.function_type
+                && function_type != FunctionType::Exponential
+            {
+                log::debug!(
+                    "{UNSUPPORTED} Function type {function_type:?} is not supported yet. Ignoring",
+                );
+
+                return None;
+            }
+
+            let input = match &function.property {
+                Some(prop_name) => Expr::Get(prop_name.clone()),
+                None => Expr::Zoom,
+            };
+
+            Some(Expr::Exponential(Box::new(ExponentialInterpolation {
+                base: function.base,
+                input,
+                control_points,
+            })))
+        }
+    }
+}
+
+/// Builds a Web Mercator [`TileSchema`] from a vector source's zoom range, scheme, and bounds.
+fn build_tile_schema(source: &VectorSource) -> Option<TileSchema> {
+    let min_z = source.minzoom as u32;
+    let max_z = source.maxzoom as u32;
+
+    let y_direction = match source.scheme {
+        TileScheme::Xyz => VerticalDirection::TopToBottom,
+        TileScheme::Tms => VerticalDirection::BottomToTop,
+    };
+
+    let mut builder = TileSchemaBuilder::web_mercator(min_z..=max_z)
+        .rect_tile_size(1024)
+        .y_direction(y_direction);
+
+    if let Some(bounds) = source.bounds
+        && let Some(rect) = wgs84_bounds_to_mercator(bounds)
+    {
+        builder = builder.tile_bounds(rect);
+    }
+
+    builder.build().ok()
+}
+
+/// Converts each supported style layer into a [`StyleRule`], logging unsupported ones.
+fn build_rules(layers: &[&MaplibreStyleLayer], tile_schema: &TileSchema) -> Vec<StyleRule> {
+    let mut rules = Vec::new();
+    for &layer in layers {
+        match layer {
+            MaplibreStyleLayer::Background(_) => {
+                // Handled by `get_background` function
+                continue;
+            }
+            MaplibreStyleLayer::Fill(fill) => {
+                if let Some(rule) = fill_rule(fill, tile_schema) {
+                    rules.push(rule);
+                }
+            }
+            MaplibreStyleLayer::Line(line) => {
+                if let Some(rule) = line_rule(line, tile_schema) {
+                    rules.push(rule);
+                }
+            }
+            MaplibreStyleLayer::Symbol(symbol) => {
+                if let Some(rule) = symbol_rule(symbol, tile_schema) {
+                    rules.push(rule);
+                }
+            }
+            other => {
+                log::debug!(
+                    "{UNSUPPORTED} Maplibre layer type '{}' (id: '{}') inside a vector source \
+                     is not yet supported. Open a GitHub issue or PR if support is desirable.",
+                    other.type_name(),
+                    other.id(),
+                );
+
+                continue;
+            }
+        }
+
+        log::trace!(
+            "Maplibre layer '{}' of type '{}' is added as a VT style rule",
+            layer.id(),
+            layer.type_name()
+        );
+    }
+    rules
+}
+
+fn symbol_rule(symbol: &SymbolLayer, tile_schema: &TileSchema) -> Option<StyleRule> {
+    let source_layer = match &symbol.source_layer {
+        Some(l) => l.clone(),
+        None => {
+            log::debug!(
+                "{UNSUPPORTED} Symbol layer '{}' has no source-layer; skipping.",
+                symbol.id
+            );
+            return None;
+        }
+    };
+
+    let min_resolution = symbol
+        .maxzoom
+        .and_then(|lod| tile_schema.lod_resolution(lod.round() as u32));
+    let max_resolution = symbol
+        .minzoom
+        .and_then(|lod| tile_schema.lod_resolution(lod.round() as u32));
+    let filter = symbol.filter.as_ref().and_then(|v| v.to_galileo_expr());
+
+    let font_color = get_color_value(&symbol.paint.text_color, Some(&symbol.paint.text_opacity))?;
+    // Even though Maplibre docs don't mention this, but it seems that text opacity is also
+    // applied to the outline color, so we use it here.
+    let outline_color = get_color_value(
+        &symbol.paint.text_halo_color,
+        Some(&symbol.paint.text_opacity),
+    )?;
+    let font_size = get_galileo_value(
+        &symbol
+            .layout
+            .text_size
+            .clone()
+            .unwrap_or_else(|| 16.0.into()),
+    )?;
+    let outline_width = get_galileo_value(
+        &symbol
+            .paint
+            .text_halo_width
+            .clone()
+            .unwrap_or_else(|| 0.0.into()),
+    )?;
+
+    let (font_family, weight, font_style) = parse_ml_fonts(&symbol.layout.text_font);
+
+    let style = VtTextStyle {
+        font_family,
+        font_size: font_size.into(),
+        font_color: font_color.into(),
+        horizontal_alignment: match symbol.layout.text_anchor.as_deref() {
+            Some("left") | Some("top-left") | Some("bottom-left") => HorizontalAlignment::Left,
+            Some("right") | Some("top-right") | Some("bottom-right") => HorizontalAlignment::Right,
+            _ => HorizontalAlignment::Center,
+        },
+        vertical_alignment: match symbol.layout.text_anchor.as_deref() {
+            Some("top") | Some("top-left") | Some("top-right") => VerticalAlignment::Top,
+            Some("bottom") | Some("bottom-left") | Some("bottom-right") => {
+                VerticalAlignment::Bottom
+            }
+            _ => VerticalAlignment::Middle,
+        },
+        weight,
+        style: font_style,
+        outline_width: outline_width.into(),
+        outline_color: outline_color.into(),
+    };
+
+    match symbol.layout.symbol_placement {
+        Some(SymbolPlacement::Point) | None => Some(StyleRule {
+            layer_name: Some(source_layer),
+            symbol: VectorTileSymbol::Label(VectorTileLabelSymbol {
+                pattern: symbol.layout.text_field.clone().unwrap_or_default(),
+                text_style: style,
+            }),
+            min_resolution,
+            max_resolution,
+            filter: filter.map(Into::into),
+        }),
+        Some(SymbolPlacement::Line) | Some(SymbolPlacement::LineCenter) => {
+            log::debug!(
+                "{UNSUPPORTED} Placing labels along lines is not supported yet. Layer '{}' is skipped.",
+                symbol.id
+            );
+            None
+        }
+    }
+}
+
+/// Parses Maplibre `text-font` entries into a font family list, [`FontWeight`], and [`FontStyle`].
+///
+/// Maplibre encodes weight and style as suffixes appended to the family name, e.g.
+/// `"Roboto Bold Italic"` or `"Noto Sans Regular"`. This function strips the known
+/// weight and style keywords from the end of each entry to recover the bare family name, and
+/// derives `FontWeight` / `FontStyle` from the first entry that contains them.
+///
+/// All family names are collected so the renderer can fall back through the list.
+fn parse_ml_fonts(text_font: &[String]) -> (Vec<String>, FontWeight, FontStyle) {
+    const STYLES: &[(&str, FontStyle)] = &[
+        ("Italic", FontStyle::Italic),
+        ("Oblique", FontStyle::Oblique),
+    ];
+
+    const WEIGHTS: &[(&str, FontWeight)] = &[
+        ("Thin", FontWeight::THIN),
+        ("ExtraLight", FontWeight::EXTRA_LIGHT),
+        ("Light", FontWeight::LIGHT),
+        ("Regular", FontWeight::NORMAL),
+        ("Medium", FontWeight::MEDIUM),
+        ("SemiBold", FontWeight::SEMI_BOLD),
+        ("Bold", FontWeight::BOLD),
+        ("ExtraBold", FontWeight::EXTRA_BOLD),
+        ("Black", FontWeight::BLACK),
+        ("Heavy", FontWeight::BLACK),
+    ];
+
+    let mut families = Vec::with_capacity(text_font.len());
+    let mut resolved_weight = FontWeight::NORMAL;
+    let mut resolved_style = FontStyle::Normal;
+    let mut style_resolved = false;
+
+    for font_str in text_font {
+        let mut rest = font_str.trim();
+
+        if !style_resolved {
+            if let Some((suffix, s)) = STYLES.iter().find(|(kw, _)| rest.ends_with(*kw)) {
+                rest = rest[..rest.len() - suffix.len()].trim();
+                resolved_style = *s;
+            }
+
+            if let Some((suffix, w)) = WEIGHTS.iter().find(|(kw, _)| rest.ends_with(*kw)) {
+                rest = rest[..rest.len() - suffix.len()].trim();
+                resolved_weight = *w;
+            }
+
+            style_resolved = true;
+        } else {
+            // For fallback fonts, strip any trailing style/weight keywords too.
+            for (suffix, _) in STYLES.iter() {
+                if rest.ends_with(*suffix) {
+                    rest = rest[..rest.len() - suffix.len()].trim();
+                    break;
+                }
+            }
+            for (suffix, _) in WEIGHTS.iter() {
+                if rest.ends_with(*suffix) {
+                    rest = rest[..rest.len() - suffix.len()].trim();
+                    break;
+                }
+            }
+        }
+
+        if !rest.is_empty() {
+            families.push(rest.to_string());
+        }
+    }
+
+    (families, resolved_weight, resolved_style)
+}
+
+/// Converts a [`FillLayer`] to a [`StyleRule`], or logs and returns `None` if unsupported.
+fn fill_rule(fill: &FillLayer, tile_schema: &TileSchema) -> Option<StyleRule> {
+    let source_layer = match &fill.source_layer {
+        Some(l) => l.clone(),
+        None => {
+            log::debug!(
+                "{UNSUPPORTED} Fill layer '{}' has no source-layer; skipping.",
+                fill.id
+            );
+            return None;
+        }
+    };
+
+    let fill_color = &fill.paint.fill_color;
+    let fill_opacity = &fill.paint.fill_opacity;
+    let color = get_color_value(fill_color, Some(fill_opacity))?;
+
+    if !fill.paint.fill_antialias {
+        log::debug!(
+            "{} not-antialiased polygons are not supported yet",
+            crate::layer::UNSUPPORTED,
+        );
+    }
+
+    log_unsupported_field!(fill.paint.fill_outline_color);
+    log_unsupported_field!(fill.paint.fill_pattern);
+    log_unsupported_field!(fill.paint.fill_translate);
+    log_unsupported_field!(fill.paint.fill_translate_anchor);
+    log_unsupported_field!(fill.paint.fill_emissive_strength);
+
+    let min_resolution = fill
+        .maxzoom
+        .and_then(|lod| tile_schema.lod_resolution(lod.round() as u32));
+    let max_resolution = fill
+        .minzoom
+        .and_then(|lod| tile_schema.lod_resolution(lod.round() as u32));
+    let filter = fill.filter.as_ref().and_then(|v| v.to_galileo_expr());
+
+    Some(StyleRule {
+        layer_name: Some(source_layer),
+        symbol: VectorTileSymbol::Polygon(VectorTilePolygonSymbol {
+            fill_color: color.into(),
+        }),
+        min_resolution,
+        max_resolution,
+        filter: filter.map(Into::into),
+    })
+}
+
+/// Converts a [`LineLayer`] to a [`StyleRule`], or logs and returns `None` if unsupported.
+fn line_rule(line: &LineLayer, tile_schema: &TileSchema) -> Option<StyleRule> {
+    log_unsupported_field!(line.paint.line_blur);
+    log_unsupported_field!(line.paint.line_gap_width);
+    log_unsupported_field!(line.paint.line_gradient);
+    log_unsupported_field!(line.paint.line_pattern);
+    log_unsupported_field!(line.paint.line_translate);
+    log_unsupported_field!(line.paint.line_translate_anchor);
+    log_unsupported_field!(line.paint.line_emissive_strength);
+    log_unsupported_field!(line.paint.line_offset);
+
+    let source_layer = match &line.source_layer {
+        Some(l) => l.clone(),
+        None => {
+            log::debug!(
+                "{UNSUPPORTED} Line layer '{}' has no source-layer; skipping.",
+                line.id
+            );
+            return None;
+        }
+    };
+
+    let stroke_color = &line.paint.line_color;
+    let stroke_opacity = &line.paint.line_opacity;
+    let color = get_color_value(stroke_color, Some(stroke_opacity))
+        .unwrap_or(Color::TRANSPARENT.into())
+        .into();
+    let stroke_width = &line.paint.line_width;
+    let width = get_galileo_value(stroke_width).unwrap_or(1.0.into()).into();
+
+    let min_resolution = line
+        .maxzoom
+        .and_then(|lod| tile_schema.lod_resolution(lod.round() as u32));
+    let max_resolution = line
+        .minzoom
+        .and_then(|lod| tile_schema.lod_resolution(lod.round() as u32));
+    let filter = line.filter.as_ref().and_then(|v| v.to_galileo_expr());
+    let dasharray = line
+        .paint
+        .line_dasharray
+        .as_ref()
+        .and_then(|v| get_galileo_value(v).map(|v| v.into()));
+
+    Some(StyleRule {
+        layer_name: Some(source_layer),
+        symbol: VectorTileSymbol::Line(VectorTileLineSymbol {
+            width,
+            stroke_color: color,
+            miter_limit: 4.0,
+            dasharray,
+        }),
+        min_resolution,
+        max_resolution,
+        filter: filter.map(Into::into),
+    })
+}
+
+/// Converts WGS84 bounding box `[west, south, east, north]` (degrees) to a Web Mercator [`Rect`]
+/// in projected meters, suitable for use with [`TileSchemaBuilder::tile_bounds`].
+fn wgs84_bounds_to_mercator(bounds: [f64; 4]) -> Option<Rect> {
+    let projection: Box<dyn Projection<InPoint = GeoPoint2d, OutPoint = Point2>> =
+        Crs::EPSG3857.get_projection()?;
+    let [west, south, east, north] = bounds;
+    let sw = projection.project(&GeoPoint2d::latlon(south, west))?;
+    let ne = projection.project(&GeoPoint2d::latlon(north, east))?;
+    Some(Rect::new(sw.x(), sw.y(), ne.x(), ne.y()))
+}

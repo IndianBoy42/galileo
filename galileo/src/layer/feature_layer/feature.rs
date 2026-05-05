@@ -1,9 +1,9 @@
+use galileo_types::Disambig;
 use galileo_types::cartesian::{Point2, Point3};
 use galileo_types::geo::impls::GeoPoint2d;
 use galileo_types::geometry::Geometry;
 use galileo_types::geometry_type::GeometryType;
 use galileo_types::impls::{Contour, MultiContour, MultiPolygon, Polygon};
-use galileo_types::Disambig;
 
 /// A feature is an arbitrary geographic object.
 pub trait Feature {
@@ -24,7 +24,9 @@ macro_rules! impl_feature {
     };
 
     ($geom:ident, $generic:ident) => {
-        impl<$generic: ::galileo_types::geometry_type::GeometryType> Feature for $geom<$generic> {
+        impl<$generic: ::galileo_types::geometry_type::GeometryType + Copy> Feature
+            for $geom<$generic>
+        {
             type Geom = Self;
             fn geometry(&self) -> &Self::Geom {
                 self

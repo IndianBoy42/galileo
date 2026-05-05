@@ -1,9 +1,9 @@
 use wgpu::{BindGroupLayout, Device, RenderPass, RenderPipeline, TextureFormat};
 
+use crate::render::RenderOptions;
 use crate::render::render_bundle::world_set::PolyVertex;
 use crate::render::wgpu::pipelines::default_targets;
-use crate::render::wgpu::{pipelines, DisplayInstance, WgpuVertexBuffers};
-use crate::render::RenderOptions;
+use crate::render::wgpu::{DisplayInstance, WgpuVertexBuffers, pipelines};
 
 pub struct MapRefPipeline {
     wgpu_pipeline: RenderPipeline,
@@ -22,8 +22,8 @@ impl MapRefPipeline {
         let targets = default_targets(format);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[map_view_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(map_view_layout)],
+            immediate_size: 0,
         });
         let mut desc =
             pipelines::default_pipeline_descriptor(&layout, &shader, &targets, &buffers, false);

@@ -1,10 +1,11 @@
 use std::mem::size_of;
 use std::sync::Arc;
 
+use galileo_types::Polygon;
 use galileo_types::cartesian::{CartesianPoint2d, CartesianPoint3d, Point2, Point3, Vector2};
 use galileo_types::contour::Contour;
 use galileo_types::impls::ClosedContour;
-use galileo_types::Polygon;
+use itertools::Itertools;
 use lyon::lyon_tessellation::{
     BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor, LineJoin,
     Side, StrokeOptions, StrokeTessellator, StrokeVertex, StrokeVertexConstructor, VertexBuffers,
@@ -19,11 +20,12 @@ use lyon::tessellation::VertexSource;
 use num_traits::AsPrimitive;
 use serde::{Deserialize, Serialize};
 
+use crate::Color;
 use crate::decoded_image::DecodedImage;
 use crate::render::point_paint::{CircleFill, PointPaint, PointShape, SectorParameters};
 use crate::render::text::{TextService, TextShaping, TextStyle};
-use crate::render::{ImagePaint, LinePaint, PolygonPaint};
-use crate::{Color, MapView};
+use crate::render::{ImagePaint, LineCap, LinePaint, PolygonPaint};
+use crate::MapView;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WorldRenderSet {
@@ -34,6 +36,7 @@ pub(crate) struct WorldRenderSet {
     pub image_store: Vec<Arc<DecodedImage>>,
     pub buffer_size: usize,
     pub anchor: Option<[f64; 3]>,
+    dpi_scale_factor: f32,
 }
 
 #[repr(C)]
@@ -54,7 +57,7 @@ pub(crate) struct ScreenRefVertex {
 pub struct ShapeArguments<'a> {
     fill: Color,
     scale: f32,
-    outline: Option<LinePaint>,
+    outline: Option<LinePaint<'a>>,
     shape: &'a ClosedContour<Point2<f32>>,
     offset: Vector2<f32>,
     rotation: f32,
@@ -62,12 +65,23 @@ pub struct ShapeArguments<'a> {
 
 impl Default for WorldRenderSet {
     fn default() -> Self {
-        Self::new()
+        Self::new(1.0)
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct LineParameters {
+    pub(crate) color: Color,
+    pub(crate) width: f32,
+    pub(crate) offset: f32,
+    pub(crate) cap: LineCap,
+    pub(crate) miter_limit: f32,
+}
+
+pub(crate) struct DashArray<'a>(pub(crate) &'a [f64]);
+
 impl WorldRenderSet {
-    pub fn new() -> Self {
+    pub fn new(dpi_scale_factor: f32) -> Self {
         Self {
             poly_tessellation: VertexBuffers::new(),
             points: Vec::new(),
@@ -76,6 +90,7 @@ impl WorldRenderSet {
             image_store: Vec::new(),
             buffer_size: 0,
             anchor: None,
+            dpi_scale_factor,
         }
     }
 
@@ -97,7 +112,6 @@ impl WorldRenderSet {
     }
 
     pub fn clip_area<N, P, Poly>(&mut self, polygon: &Poly, view: &MapView)
-    // Added view
     where
         N: AsPrimitive<f64>,
         P: CartesianPoint3d<Num = N>,
@@ -169,7 +183,7 @@ impl WorldRenderSet {
         &mut self,
         image_store_index: usize,
         vertices: [ImageVertex; 4],
-        view: &MapView,
+        _view: &MapView,
     ) -> usize {
         let index = self.images.len();
         self.images.push(ImageInfo {
@@ -180,6 +194,7 @@ impl WorldRenderSet {
     }
 
     fn add_image_to_store(&mut self, image: Arc<DecodedImage>, view: &MapView) -> usize {
+        let _ = view; // view parameter kept for API consistency but not used for dedup
         for (i, stored) in self.image_store.iter().enumerate() {
             if Arc::ptr_eq(stored, &image) {
                 return i;
@@ -205,10 +220,13 @@ impl WorldRenderSet {
                 radius,
                 outline,
             } => {
-                self.add_circle(point, *fill, *radius, *outline, paint.offset, view);
+                self.add_circle(point, *fill, *radius, outline.clone(), paint.offset, view);
             }
-            PointShape::Sector(parameters) => {
-                self.add_circle_sector(point, *parameters, paint.offset, view);
+            PointShape::Sector {
+                parameters,
+                outline,
+            } => {
+                self.add_circle_sector(point, *parameters, outline.clone(), paint.offset, view);
             }
             PointShape::Square {
                 fill,
@@ -218,7 +236,7 @@ impl WorldRenderSet {
                 let shape = ShapeArguments {
                     fill: *fill,
                     scale: *size,
-                    outline: *outline,
+                    outline: outline.clone(),
                     shape: &square_shape(),
                     offset: paint.offset,
                     rotation: 0.0,
@@ -235,7 +253,7 @@ impl WorldRenderSet {
                 let shape = ShapeArguments {
                     fill: *fill,
                     scale: *scale,
-                    outline: *outline,
+                    outline: outline.clone(),
                     shape,
                     offset: paint.offset,
                     rotation: *rotation,
@@ -256,27 +274,142 @@ impl WorldRenderSet {
         view: &MapView,
     ) where
         N: AsPrimitive<f64>,
-        P: CartesianPoint3d<Num = N>,
+        P: CartesianPoint3d<Num = N> + Copy,
         C: Contour<Point = P>,
     {
-        self.add_line_lod(line, *paint, min_resolution, view);
+        match paint.dasharray() {
+            Some(dasharray) => {
+                self.add_dashed_line(line, dasharray, paint.line_parameters(), min_resolution, view)
+            }
+            None => self.tessellate_line(
+                line.iter_points(),
+                line.is_closed(),
+                paint.line_parameters(),
+                min_resolution,
+                view,
+            ),
+        }
     }
 
-    fn add_line_lod<N, P, C>(
+    fn add_dashed_line<N, P, C>(
         &mut self,
         line: &C,
-        paint: LinePaint,
+        dasharray: DashArray,
+        paint: LineParameters,
+        min_resolution: f64,
+        view: &MapView,
+    ) where
+        N: AsPrimitive<f64>,
+        P: CartesianPoint3d<Num = N> + Copy,
+        C: Contour<Point = P>,
+    {
+        const MIN_PATTERN_LENGTH: f32 = 0.1;
+
+        let scale = 1.0 / min_resolution as f32;
+        let pattern = dasharray.0;
+        if pattern.is_empty() {
+            return;
+        }
+
+        let total_pattern_len = pattern.iter().sum::<f64>() as f32 * paint.width;
+        if total_pattern_len <= MIN_PATTERN_LENGTH {
+            // If pattern is too short, the result looks exactly the same as a continuous line, but
+            // computations required are much higher. So we just render a line without dashes.
+            return self.tessellate_line(
+                line.iter_points(),
+                line.is_closed(),
+                paint,
+                min_resolution,
+                view,
+            );
+        }
+
+        let mut pattern_index = 0usize;
+        let mut is_dash = true;
+        let mut remaining_in_segment = pattern[0] as f32 * paint.width;
+        let mut current_dash: Vec<Point3<f64>> = vec![];
+
+        for (from, to) in line.iter_points_closing().tuple_windows() {
+            let fx: f64 = from.x().as_();
+            let fy: f64 = from.y().as_();
+            let fz: f64 = from.z().as_();
+            let tx: f64 = to.x().as_();
+            let ty: f64 = to.y().as_();
+            let tz: f64 = to.z().as_();
+
+            let dx = (tx - fx) as f32 * scale;
+            let dy = (ty - fy) as f32 * scale;
+            let segment_len = (dx * dx + dy * dy).sqrt();
+
+            if segment_len <= 0.0 {
+                continue;
+            }
+
+            let mut traveled = 0.0f32;
+
+            while traveled < segment_len {
+                let t_start = traveled / segment_len;
+                let step = remaining_in_segment.min(segment_len - traveled);
+                traveled += step;
+                let t_end = traveled / segment_len;
+
+                if is_dash {
+                    if current_dash.is_empty() {
+                        current_dash.push(Point3::new(
+                            fx + (tx - fx) * t_start as f64,
+                            fy + (ty - fy) * t_start as f64,
+                            fz + (tz - fz) * t_start as f64,
+                        ));
+                    }
+                    current_dash.push(Point3::new(
+                        fx + (tx - fx) * t_end as f64,
+                        fy + (ty - fy) * t_end as f64,
+                        fz + (tz - fz) * t_end as f64,
+                    ));
+                }
+
+                remaining_in_segment -= step;
+
+                if remaining_in_segment <= 0.0 {
+                    if is_dash && current_dash.len() >= 2 {
+                        self.tessellate_line(
+                            std::mem::take(&mut current_dash),
+                            false,
+                            paint,
+                            min_resolution,
+                            view,
+                        );
+                    } else {
+                        current_dash.clear();
+                    }
+
+                    pattern_index = (pattern_index + 1) % pattern.len();
+                    is_dash = !is_dash;
+                    remaining_in_segment = pattern[pattern_index] as f32 * paint.width;
+                }
+            }
+        }
+
+        if is_dash && current_dash.len() >= 2 {
+            self.tessellate_line(current_dash, false, paint, min_resolution, view);
+        }
+    }
+
+    fn tessellate_line<N, P>(
+        &mut self,
+        line: impl IntoIterator<Item = P>,
+        is_closed: bool,
+        paint: LineParameters,
         min_resolution: f64,
         view: &MapView,
     ) where
         N: AsPrimitive<f64>,
         P: CartesianPoint3d<Num = N>,
-        C: Contour<Point = P>,
     {
         let [cx, cy, cz] = self.get_anchor(view);
         let tessellation = &mut self.poly_tessellation;
         let mut path_builder = BuilderWithAttributes::new(1);
-        let mut iterator = line.iter_points();
+        let mut iterator = line.into_iter();
 
         let Some(first_point) = iterator.next() else {
             return;
@@ -300,12 +433,12 @@ impl WorldRenderSet {
             );
         }
 
-        path_builder.end(line.is_closed());
+        path_builder.end(is_closed);
         let path = path_builder.build();
 
         let vertex_constructor = LineVertexConstructor {
-            width: paint.width as f32,
-            offset: paint.offset as f32,
+            width: paint.width * self.dpi_scale_factor,
+            offset: paint.offset,
             color: paint.color.to_f32_array(),
             resolution: min_resolution as f32,
             path: &path,
@@ -318,8 +451,8 @@ impl WorldRenderSet {
         if let Err(err) = tesselator.tessellate_path(
             &path,
             &StrokeOptions::DEFAULT
-                .with_line_cap(paint.line_cap.into())
-                .with_line_width(paint.width as f32)
+                .with_line_cap(paint.cap.into())
+                .with_line_width(paint.width * self.dpi_scale_factor)
                 .with_miter_limit(paint.miter_limit)
                 .with_tolerance(0.1)
                 .with_line_join(LineJoin::MiterClip),
@@ -418,7 +551,6 @@ impl WorldRenderSet {
 
         let vertex_constructor = PolygonVertexConstructor {
             color: paint.color.to_f32_array(),
-            // centroid field is removed
         };
         let mut tesselator = FillTessellator::new();
 
@@ -442,7 +574,7 @@ impl WorldRenderSet {
             outline,
             shape,
             offset,
-            rotation,
+            rotation: _,
         } = shape;
         let [v_cx, v_cy, v_cz] = self.get_anchor(view);
         let rel_anchor_x = position.x().as_() - v_cx;
@@ -455,7 +587,7 @@ impl WorldRenderSet {
         ];
 
         let mut path_builder = BuilderWithAttributes::new(0);
-        build_contour_path(&mut path_builder, shape, scale);
+        build_contour_path(&mut path_builder, shape, scale * self.dpi_scale_factor);
         let path = path_builder.build();
 
         let start_vertex_count = self.poly_tessellation.vertices.len();
@@ -464,15 +596,19 @@ impl WorldRenderSet {
         let tessellation = &mut self.poly_tessellation;
 
         if let Some(outline) = outline {
+            let outline_params = outline.line_parameters();
             let vertex_constructor = ScreenRefVertexConstructor {
-                color: outline.color.to_f32_array(),
+                color: outline_params.color.to_f32_array(),
                 position: relative_anchor_pos_f32,
                 offset,
             };
 
             if let Err(err) = StrokeTessellator::new().tessellate(
                 &path,
-                &StrokeOptions::DEFAULT.with_line_width(outline.width as f32 * 2.0),
+                &StrokeOptions::DEFAULT
+                    .with_line_cap(outline_params.cap.into())
+                    .with_line_width(outline_params.width * 2.0 * self.dpi_scale_factor)
+                    .with_miter_limit(outline.miter_limit),
                 &mut BuffersBuilder::new(tessellation, vertex_constructor),
             ) {
                 log::warn!("Shape tessellation failed: {err:?}");
@@ -507,7 +643,7 @@ impl WorldRenderSet {
         position: &P,
         fill: CircleFill,
         radius: f32,
-        outline: Option<LinePaint>,
+        outline: Option<LinePaint<'_>>,
         offset: Vector2<f32>,
         view: &MapView,
     ) where
@@ -521,8 +657,8 @@ impl WorldRenderSet {
                 radius,
                 start_angle: 0.0,
                 end_angle: std::f32::consts::PI * 2.0,
-                outline,
             },
+            outline,
             offset,
             view,
         )
@@ -532,6 +668,7 @@ impl WorldRenderSet {
         &mut self,
         position: &P,
         parameters: SectorParameters,
+        outline: Option<LinePaint<'_>>,
         offset: Vector2<f32>,
         view: &MapView,
     ) where
@@ -548,7 +685,6 @@ impl WorldRenderSet {
             radius,
             start_angle,
             end_angle,
-            outline,
         } = parameters;
         const TOLERANCE: f32 = 0.1;
         let dr = (end_angle - start_angle)
@@ -564,7 +700,7 @@ impl WorldRenderSet {
 
         let is_full_circle = (dr - std::f32::consts::PI * 2.0).abs() < TOLERANCE;
 
-        let mut contour = get_circle_sector(radius, start_angle, end_angle);
+        let mut contour = get_circle_sector(radius * self.dpi_scale_factor, start_angle, end_angle);
         let first_index = self.poly_tessellation.vertices.len() as u32;
 
         let start_vertex_count = self.poly_tessellation.vertices.len();
@@ -596,14 +732,14 @@ impl WorldRenderSet {
         self.poly_tessellation.vertices.append(&mut vertices);
         self.poly_tessellation.indices.append(&mut indices);
 
-        if outline.is_some() {
+        if let Some(outline) = outline {
             if !is_full_circle {
                 contour.push(Point2::new(0.0, 0.0));
             }
             let shape = ShapeArguments {
                 fill: Color::TRANSPARENT,
                 scale: radius,
-                outline,
+                outline: Some(outline),
                 shape: &ClosedContour::new(contour),
                 offset,
                 rotation: 0.0,
@@ -656,7 +792,7 @@ impl WorldRenderSet {
         let rel_anchor_y = position.y().as_() - v_cy;
         let rel_anchor_z = position.z().as_() - v_cz;
 
-        match TextService::shape(text, style, offset) {
+        match TextService::shape(text, style, offset, self.dpi_scale_factor) {
             Ok(TextShaping::Tessellation { glyphs, .. }) => {
                 for glyph in glyphs {
                     let vertices_start = self.poly_tessellation.vertices.len() as u32;
@@ -793,8 +929,8 @@ impl StrokeVertexConstructor<PolyVertex> for LineVertexConstructor<'_> {
                 let prev_id = EndpointId(prev_id);
                 let from = self.path[prev_id]; // Lyon path point: (world-center)/res
                 let to = self.path[id]; // Lyon path point: (world-center)/res
-                let dx = from.x - to.x; // Diff in (world-center)/res units
-                let dy = from.y - to.y; // Diff in (world-center)/res units
+                let _dx = from.x - to.x; // Diff in (world-center)/res units
+                let _dy = from.y - to.y; // Diff in (world-center)/res units
                                         // norm_limit should be in world units.
                                         // (dx*dx + dy*dy).sqrt() is length in (world-center)/res units.
                                         // Multiply by self.resolution to get world length.

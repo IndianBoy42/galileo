@@ -4,8 +4,8 @@ use galileo_types::cartesian::Vector2;
 use lyon::lyon_tessellation::{
     BuffersBuilder, FillOptions, FillTessellator, FillVertex, FillVertexConstructor, VertexBuffers,
 };
-use lyon::path::path::Builder;
 use lyon::path::Path;
+use lyon::path::path::Builder;
 use lyon::tessellation::{StrokeOptions, StrokeTessellator, StrokeVertexConstructor};
 use rustybuzz::ttf_parser::{self, GlyphId, OutlineBuilder, Tag};
 use rustybuzz::{Direction, UnicodeBuffer};
@@ -13,8 +13,8 @@ use rustybuzz::{Direction, UnicodeBuffer};
 use super::font_provider::FontProvider;
 use super::text_service::FontServiceError;
 use super::{FontProperties, GlyphVertex};
-use crate::render::text::{TessellatedGlyph, TextRasterizer, TextShaping, TextStyle};
 use crate::Color;
+use crate::render::text::{TessellatedGlyph, TextRasterizer, TextShaping, TextStyle};
 
 /// Font service provider that uses `rustybuzz` crate to shape and vectorize text
 #[derive(Default)]
@@ -43,7 +43,12 @@ impl TextRasterizer for RustybuzzRasterizer {
         style: &TextStyle,
         offset: Vector2<f32>,
         font_provider: &dyn FontProvider,
+        dpi_scale_factor: f32,
     ) -> Result<TextShaping, FontServiceError> {
+        if text.is_empty() {
+            return Ok(TextShaping::Tessellation { glyphs: vec![] });
+        }
+
         let mut buffer = UnicodeBuffer::new();
         buffer.push_str(text);
         buffer.guess_segment_properties();
@@ -59,7 +64,7 @@ impl TextRasterizer for RustybuzzRasterizer {
         face.set_variation(Tag::from_bytes(b"wdth"), 1.0);
 
         let units = face.units_per_em() as f32;
-        let scale = style.font_size / units;
+        let scale = style.font_size / units * dpi_scale_factor;
 
         let is_vertical = matches!(
             buffer.direction(),

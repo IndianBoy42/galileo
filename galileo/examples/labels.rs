@@ -2,11 +2,10 @@
 
 use std::sync::Arc;
 
-use eframe::CreationContext;
 use egui::Color32;
+use galileo::layer::FeatureLayer;
 use galileo::layer::feature_layer::Feature;
 use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
-use galileo::layer::FeatureLayer;
 use galileo::render::point_paint::PointPaint;
 use galileo::render::render_bundle::RenderBundle;
 use galileo::render::text::text_service::TextService;
@@ -17,8 +16,8 @@ use galileo::symbol::Symbol;
 use galileo::{Color, Map, MapBuilder};
 use galileo_egui::{EguiMap, EguiMapState};
 use galileo_types::cartesian::{Point3, Vector2};
-use galileo_types::geo::impls::GeoPoint2d;
 use galileo_types::geo::Crs;
+use galileo_types::geo::impls::GeoPoint2d;
 use galileo_types::geometry::Geom;
 use galileo_types::geometry_type::GeoSpace2d;
 use galileo_types::latlon;
@@ -33,24 +32,19 @@ struct EguiMapApp {
     is_bold: bool,
     is_italic: bool,
     outline_width: f32,
-    outline_color: Color32,
+    outline_color: [f32; 4],
     attach_to_map: bool,
 }
 
 impl EguiMapApp {
-    fn new(mut map: Map, cc: &CreationContext) -> Self {
+    fn new(mut egui_map_state: EguiMapState) -> Self {
         let layer = FeatureLayer::new(points(), LabeledSymbol::new(), Crs::EPSG3857);
         let layer = Arc::new(RwLock::new(layer));
 
-        map.layers_mut().push(layer.clone());
+        egui_map_state.map_mut().layers_mut().push(layer.clone());
 
         Self {
-            map: EguiMapState::new(
-                map,
-                cc.egui_ctx.clone(),
-                cc.wgpu_render_state.clone().expect("no render state"),
-                [],
-            ),
+            map: egui_map_state,
             feature_layer: layer,
             font_size: 20.0,
             horizontal_align: HorizontalAlignment::Center,
@@ -58,7 +52,7 @@ impl EguiMapApp {
             is_bold: false,
             is_italic: false,
             outline_width: 0.0,
-            outline_color: Color32::WHITE,
+            outline_color: Color32::WHITE.to_normalized_gamma_f32(),
             attach_to_map: false,
         }
     }
@@ -84,10 +78,10 @@ impl EguiMapApp {
                 style,
                 outline_width: self.outline_width,
                 outline_color: Color::rgba(
-                    self.outline_color.r(),
-                    self.outline_color.g(),
-                    self.outline_color.b(),
-                    self.outline_color.a(),
+                    (self.outline_color[0] * 255.0) as u8,
+                    (self.outline_color[1] * 255.0) as u8,
+                    (self.outline_color[2] * 255.0) as u8,
+                    (self.outline_color[3] * 255.0) as u8,
                 ),
             },
             attach_to_map: self.attach_to_map,
@@ -163,11 +157,11 @@ impl EguiMapApp {
 }
 
 impl eframe::App for EguiMapApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             EguiMap::new(&mut self.map).show_ui(ui);
 
-            egui::Window::new("Galileo map").show(ctx, |ui| {
+            egui::Window::new("Galileo map").show(ui.ctx(), |ui| {
                 ui.label("Text format:");
 
                 ui.horizontal(|ui| {
@@ -213,7 +207,7 @@ impl eframe::App for EguiMapApp {
                     }
 
                     if ui
-                        .color_edit_button_srgba(&mut self.outline_color)
+                        .color_edit_button_rgba_unmultiplied(&mut self.outline_color)
                         .changed()
                     {
                         self.update_symbol();
@@ -240,7 +234,9 @@ fn main() {
 pub(crate) fn run() {
     initialize_font_service();
     let map = create_map();
-    galileo_egui::init_with_app(Box::new(|cc| Ok(Box::new(EguiMapApp::new(map, cc)))))
+    galileo_egui::InitBuilder::new(map)
+        .with_app_builder(|egui_map_state, _| Box::new(EguiMapApp::new(egui_map_state)))
+        .init()
         .expect("failed to initialize");
 }
 
@@ -318,12 +314,12 @@ impl LabeledSymbol {
         Self {
             style: TextStyle {
                 font_family: vec![
-                    "DejaVu Sans".to_string(),
-                    "Noto Sans CJK KR".to_string(),
-                    "Noto Sans CJK JP".to_string(),
-                    "Noto Sans CJK HK".to_string(),
-                    "Noto Sans CJK SC".to_string(),
                     "Noto Sans".to_string(),
+                    "Noto Sans Arabic".to_string(),
+                    "Noto Sans Hebrew".to_string(),
+                    "Noto Sans SC".to_string(),
+                    "Noto Sans KR".to_string(),
+                    "Noto Sans JP".to_string(),
                 ],
                 font_size: 20.0,
                 font_color: Color::BLACK,

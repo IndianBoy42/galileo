@@ -1,10 +1,8 @@
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Color representation.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(from = "String", into = "String"))]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct Color {
     r: u8,
     g: u8,
@@ -12,9 +10,12 @@ pub struct Color {
     a: u8,
 }
 
-impl From<String> for Color {
-    fn from(value: String) -> Self {
-        Self::try_from_hex(&value).unwrap_or(Color::rgba(0, 0, 0, 255))
+impl TryFrom<String> for Color {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::try_from_hex(value.as_ref())
+            .ok_or_else(|| format!("Invalid hex color value: {value}"))
     }
 }
 
@@ -110,6 +111,15 @@ impl Color {
 
     /// Returns a new color instance, copied from the base one but with the given alpha channel.
     pub fn with_alpha(&self, a: u8) -> Self {
+        Self { a, ..*self }
+    }
+
+    /// Returns a new color instance, copied from the base one but with the given alpha channel.
+    ///
+    /// Alpha value is given in 0.0..1.0 range.
+    pub fn with_alpha_float(&self, a: f64) -> Self {
+        let a = a.clamp(0.0, 1.0);
+        let a = (a * 255.0) as u8;
         Self { a, ..*self }
     }
 

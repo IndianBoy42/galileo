@@ -8,8 +8,8 @@ use galileo_types::cartesian::Vector2;
 use galileo_types::geo::Crs;
 use galileo_types::geometry_type::GeoSpace2d;
 use galileo_types::{Disambig, Disambiguate};
-use geozero::geojson::GeoJson;
 use geozero::ToGeo;
+use geozero::geojson::GeoJson;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
@@ -17,7 +17,9 @@ fn main() {
 }
 
 pub(crate) fn run() {
-    galileo_egui::init(create_map(), []).expect("failed to initialize");
+    galileo_egui::InitBuilder::new(create_map())
+        .init()
+        .expect("failed to initialize");
 }
 
 fn load_points() -> Vec<Disambig<geo_types::Point, GeoSpace2d>> {

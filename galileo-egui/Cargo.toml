@@ -13,6 +13,7 @@ readme = "../README.md"
 [features]
 default = ["init"]
 init = ["eframe", "tokio", "env_logger"]
+fontconfig-dlopen = ["galileo/fontconfig-dlopen"]
 
 [dependencies]
 egui = { workspace = true }
@@ -23,10 +24,14 @@ eframe = { workspace = true, optional = true, default-features = false, features
     "persistence",
 ] }
 env_logger = { workspace = true, optional = true }
-galileo = { workspace = true }
+galileo = { workspace = true, default-features = false, features = ["wgpu"] }
 log = { workspace = true }
 tokio = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = { workspace = true }
 web-sys = { workspace = true }
+getrandom = { workspace = true, features = ["wasm_js"] }
+
+[lints]
+workspace = true

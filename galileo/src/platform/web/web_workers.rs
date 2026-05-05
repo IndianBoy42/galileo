@@ -4,8 +4,8 @@ use std::cell::{LazyCell, RefCell};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use bytes::Bytes;
 use futures::channel::oneshot;
@@ -13,15 +13,16 @@ use futures::channel::oneshot::Sender;
 use galileo_mvt::MvtTile;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch::Receiver;
-use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 use web_sys::Worker;
 
+use crate::TileSchema;
 use crate::layer::vector_tile_layer::style::VectorTileStyle;
 use crate::layer::vector_tile_layer::tile_provider::processor::TileProcessingError;
 use crate::render::render_bundle::RenderBundle;
 use crate::tile_schema::TileIndex;
-use crate::{MapView, TileSchema};
+use crate::MapView;
 
 const WORKER_URL: &str = "./vt_worker.js";
 const WORKER_COUNT: usize = 4;
@@ -212,7 +213,7 @@ impl WebWorkerService {
             worker,
         );
 
-        log::debug!(
+        log::trace!(
             "Sent request {request_id} to web worker in {} ms",
             start.elapsed().as_millis()
         );
@@ -287,7 +288,7 @@ impl WebWorkerService {
                         }
                     };
 
-                log::info!(
+                log::trace!(
                     "Received response for request {} from a web worker in {} ms",
                     response.request_id,
                     start.elapsed().as_millis(),
@@ -311,10 +312,12 @@ impl WebWorkerService {
                         let channel = pending_requests.borrow_mut().remove(&response.request_id);
                         if let Some(channel) = channel {
                             if let Err(err) = channel.send(Ok(v)) {
-                                log::error!("Failed to send result of web worker execution through channel: {err:?}");
+                                log::error!(
+                                    "Failed to send result of web worker execution through channel: {err:?}"
+                                );
                             }
 
-                            log::debug!(
+                            log::trace!(
                                 "Response for request {} is sent to the caller",
                                 response.request_id
                             );
@@ -343,19 +346,19 @@ mod worker {
     use wasm_bindgen::{JsCast, JsValue};
 
     use super::{WebWorkerRequest, WebWorkerRequestId, WebWorkerRequestPayload, WebWorkerResponse};
+    use crate::TileSchema;
     use crate::layer::vector_tile_layer::style::VectorTileStyle;
-    use crate::layer::vector_tile_layer::tile_provider::processor::TileProcessingError;
     use crate::layer::vector_tile_layer::tile_provider::VtProcessor;
+    use crate::layer::vector_tile_layer::tile_provider::processor::TileProcessingError;
     use crate::platform::web::web_workers::WebWorkerResponsePayload;
     use crate::render::render_bundle::RenderBundle;
     use crate::render::text::{RustybuzzRasterizer, TextService};
     use crate::tile_schema::TileIndex;
-    use crate::TileSchema;
 
     #[wasm_bindgen]
     pub fn init_vt_worker() {
         std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-        console_log::init_with_level(log::Level::Trace).expect("Couldn't init logger");
+        console_log::init_with_level(log::Level::Info).expect("Couldn't init logger");
 
         log::debug!("Vt worker is initialized");
 
@@ -378,7 +381,7 @@ mod worker {
             .post_message(&js_value)
             .expect("failed to send web worker response");
 
-        log::debug!(
+        log::trace!(
             "Web woker sent response ({js_value:?}) for request {}",
             response.request_id
         );
@@ -401,7 +404,7 @@ mod worker {
             payload: request_payload,
         } = request;
 
-        log::debug!(
+        log::trace!(
             "Web worker processing request {request_id}. Decoded in {} ms",
             start.elapsed().as_millis()
         );
@@ -412,7 +415,7 @@ mod worker {
             request_id,
             payload,
         };
-        log::debug!(
+        log::trace!(
             "Processed request {request_id} in {} ms",
             start.elapsed().as_millis()
         );
@@ -445,7 +448,7 @@ mod worker {
     }
 
     fn load_font(font_data: Bytes) -> WebWorkerResponsePayload {
-        log::debug!("Loading font data in web workder");
+        log::trace!("Loading font data in web workder");
 
         if TextService::instance().is_none() {
             let provider = RustybuzzRasterizer::default();

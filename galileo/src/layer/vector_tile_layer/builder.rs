@@ -1,20 +1,23 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 
+use super::VectorTileLayer;
 use super::style::{
-    VectorTileDefaultSymbol, VectorTileLineSymbol, VectorTilePolygonSymbol, VectorTileStyle,
+    StyleRule, VectorTileLineSymbol, VectorTilePolygonSymbol, VectorTileStyle, VectorTileSymbol,
 };
+use super::tile_provider::VectorTileProvider;
 use super::tile_provider::loader::WebVtLoader;
 use super::tile_provider::processor::VectorTileProcessor;
-use super::tile_provider::VectorTileProvider;
-use super::VectorTileLayer;
 use crate::error::GalileoError;
-use crate::layer::attribution::Attribution;
-use crate::layer::data_provider::{FileCacheController, PersistentCacheController, UrlSource};
 use crate::layer::Layer;
-use crate::tile_schema::TileIndex;
+use crate::layer::attribution::Attribution;
+use crate::layer::data_provider::{
+    FileCacheController, FileCachePathModifier, PersistentCacheController, UrlSource,
+};
+use crate::tile_schema::{TileIndex, TileSchemaBuilder};
 use crate::{Color, Messenger, TileSchema};
 
 /// Constructor for a [`VectorTileLayer`].
@@ -22,7 +25,7 @@ use crate::{Color, Messenger, TileSchema};
 /// ```
 /// use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
 ///
-/// # fn load_tile_schema() -> galileo::TileSchema { galileo::TileSchema::web(10) }
+/// # fn load_tile_schema() -> galileo::TileSchema { galileo::tile_schema::TileSchemaBuilder::web_mercator(0..=10).build().unwrap() }
 /// # fn load_style() -> galileo::layer::vector_tile_layer::style::VectorTileStyle {
 /// #     galileo::layer::vector_tile_layer::style::VectorTileStyle::default() }
 ///
@@ -50,6 +53,7 @@ pub struct VectorTileLayerBuilder {
     cache: CacheType,
     offline_mode: bool,
     attribution: Option<Attribution>,
+    fade_in_duration: Option<Duration>,
 }
 
 enum ProviderType {
@@ -59,7 +63,7 @@ enum ProviderType {
 
 enum CacheType {
     None,
-    File(PathBuf),
+    File(PathBuf, Option<Box<FileCachePathModifier>>),
     Custom(Box<dyn PersistentCacheController<str, Bytes>>),
 }
 
@@ -87,10 +91,11 @@ impl VectorTileLayerBuilder {
             cache: CacheType::None,
             offline_mode: false,
             attribution: None,
+            fade_in_duration: None,
         }
     }
 
-    /// Initializes a builder for a lyer with the given tile provider.
+    /// Initializes a builder for a layer with the given tile provider.
     ///
     /// ```
     /// use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
@@ -115,6 +120,7 @@ impl VectorTileLayerBuilder {
             cache: CacheType::None,
             offline_mode: false,
             attribution: None,
+            fade_in_duration: None,
         }
     }
 
@@ -159,7 +165,22 @@ impl VectorTileLayerBuilder {
         // and there is no simple way to detect if there is for the current target. So I'd rather
         // have both methods for future, when we want to add support for more platforms or have a
         // better way to check if the FS operations are available on the current target.
-        self.cache = CacheType::File(path.as_ref().into());
+        self.cache = CacheType::File(path.as_ref().into(), None);
+        self
+    }
+
+    /// Same as [`with_file_cache`], but also modifies the file path by given `modifier` function
+    pub fn with_file_cache_modifier(
+        mut self,
+        path: impl AsRef<Path>,
+        modifier: Box<FileCachePathModifier>,
+    ) -> Self {
+        // You would think that we don't need `with_file_cache_modifier_checked` method and can move its
+        // logic here instead. But actually not all `wasm32` platforms don't have access to the FS,
+        // and there is no simple way to detect if there is for the current target. So I'd rather
+        // have both methods for future, when we want to add support for more platforms or have a
+        // better way to check if the FS operations are available on the current target.
+        self.cache = CacheType::File(path.as_ref().into(), Some(modifier));
         self
     }
 
@@ -207,6 +228,21 @@ impl VectorTileLayerBuilder {
         this
     }
 
+    /// Same as [`with_file_cache_checked`], but also modifies the file path by given `modifier` function
+    pub fn with_file_cache_modifier_checked(
+        self,
+        _path: impl AsRef<Path>,
+        _modifier: Box<FileCachePathModifier>,
+    ) -> Self {
+        #[allow(unused_mut)]
+        let mut this = self;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            this = this.with_file_cache_modifier(_path, _modifier);
+        }
+        this
+    }
+
     /// Adds the given persistent cache for the tiles.
     ///
     /// Cannot be used with custom tile provider given by
@@ -219,7 +255,7 @@ impl VectorTileLayerBuilder {
     /// use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
     /// use galileo::layer::data_provider::FileCacheController;
     ///
-    /// let cache_controller = FileCacheController::new("target")?;
+    /// let cache_controller = FileCacheController::new("target", None)?;
     /// let layer = VectorTileLayerBuilder::new_rest(
     ///     |index| {
     ///         format!(
@@ -279,7 +315,7 @@ impl VectorTileLayerBuilder {
     /// ```
     /// use galileo::layer::Layer;
     /// use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
-    /// use galileo::TileSchema;
+    /// use galileo::tile_schema::TileSchemaBuilder;
     ///
     /// let layer = VectorTileLayerBuilder::new_rest(
     ///     |index| {
@@ -288,10 +324,10 @@ impl VectorTileLayerBuilder {
     ///             index.z, index.x, index.y
     ///         )
     ///     })
-    ///     .with_tile_schema(TileSchema::web(10))
+    ///     .with_tile_schema(TileSchemaBuilder::web_mercator(0..=10).build().unwrap())
     ///     .build()?;
     ///
-    /// assert_eq!(*layer.tile_schema().as_ref().unwrap(), TileSchema::web(10));
+    /// assert_eq!(*layer.tile_schema().as_ref().unwrap(), TileSchemaBuilder::web_mercator(0..=10).build().unwrap());
     /// # Ok::<(), galileo::error::GalileoError>(())
     /// ```
     pub fn with_tile_schema(mut self, tile_schema: TileSchema) -> Self {
@@ -341,6 +377,31 @@ impl VectorTileLayerBuilder {
         self
     }
 
+    /// Sets the layer tiles' fade in duration.
+    ///
+    /// If set to 0, tiles will appear on the map as soon as loaded without fade in animation.
+    ///
+    /// Default value: 300ms.
+    ///
+    /// ```
+    /// use galileo::layer::vector_tile_layer::VectorTileLayerBuilder;
+    ///
+    /// let layer = VectorTileLayerBuilder::new_rest(
+    ///     |index| {
+    ///         format!(
+    ///             "https://vector_tiles.example.com/{}/{}/{}.png",
+    ///             index.z, index.x, index.y
+    ///         )
+    ///     })
+    ///     .with_fade_in_duration(std::time::Duration::from_millis(500))
+    ///     .build()?;
+    /// # Ok::<(), galileo::error::GalileoError>(())
+    /// ```
+    pub fn with_fade_in_duration(mut self, fade_in_duration: Duration) -> Self {
+        self.fade_in_duration = Some(fade_in_duration);
+        self
+    }
+
     /// Consumes the builder and constructs the vector tile layer.
     ///
     /// Will return an error if the layer is configured incorrectly or if the cache controller
@@ -354,13 +415,20 @@ impl VectorTileLayerBuilder {
             cache,
             offline_mode,
             attribution,
+            fade_in_duration,
         } = self;
 
-        let tile_schema = tile_schema.unwrap_or_else(|| TileSchema::web(18));
+        let tile_schema = tile_schema.unwrap_or_else(|| {
+            TileSchemaBuilder::web_mercator(0..=18)
+                .build()
+                .expect("default tile schema is valid")
+        });
 
         let cache_controller: Option<Box<dyn PersistentCacheController<str, Bytes>>> = match cache {
             CacheType::None => None,
-            CacheType::File(path_buf) => Some(Box::new(FileCacheController::new(&path_buf)?)),
+            CacheType::File(path_buf, modifier) => {
+                Some(Box::new(FileCacheController::new(&path_buf, modifier)?))
+            }
             CacheType::Custom(persistent_cache_controller) => Some(persistent_cache_controller),
         };
 
@@ -393,8 +461,12 @@ impl VectorTileLayerBuilder {
         let style = style.unwrap_or_else(Self::default_style);
 
         let mut layer = VectorTileLayer::new(provider, style, tile_schema, attribution);
+        if let Some(fade_in_duration) = fade_in_duration {
+            layer.set_fade_in_duration(fade_in_duration);
+        }
+
         if let Some(messenger) = messenger {
-            layer.set_messenger(messenger);
+            layer.set_messenger(messenger.into());
         }
 
         Ok(layer)
@@ -417,20 +489,30 @@ impl VectorTileLayerBuilder {
 
     fn default_style() -> VectorTileStyle {
         VectorTileStyle {
-            rules: vec![],
-            default_symbol: VectorTileDefaultSymbol {
-                point: None,
-                line: Some(VectorTileLineSymbol {
-                    width: 1.0,
-                    stroke_color: Color::BLACK,
-                    miter_limit: 4.0,
-                }),
-                polygon: Some(VectorTilePolygonSymbol {
-                    fill_color: Color::GRAY,
-                }),
-                label: None,
-            },
-            background: Color::WHITE,
+            rules: vec![
+                StyleRule {
+                    layer_name: None,
+                    max_resolution: None,
+                    min_resolution: None,
+                    filter: None,
+                    symbol: VectorTileSymbol::Line(VectorTileLineSymbol {
+                        width: 1.0.into(),
+                        stroke_color: Color::BLACK.into(),
+                        miter_limit: 4.0,
+                        dasharray: None,
+                    }),
+                },
+                StyleRule {
+                    layer_name: None,
+                    max_resolution: None,
+                    min_resolution: None,
+                    filter: None,
+                    symbol: VectorTileSymbol::Polygon(VectorTilePolygonSymbol {
+                        fill_color: Color::GRAY.into(),
+                    }),
+                },
+            ],
+            background: Color::WHITE.into(),
         }
     }
 }
@@ -451,12 +533,12 @@ mod tests {
 
     #[test]
     fn with_file_cache_replaces_cache_controller() {
-        let cache = FileCacheController::new("target").unwrap();
+        let cache = FileCacheController::new("target", None).unwrap();
         let builder = VectorTileLayerBuilder::new_rest(|_| unimplemented!())
             .with_cache_controller(cache)
             .with_file_cache("target");
 
-        assert!(matches!(builder.cache, CacheType::File(_)));
+        assert!(matches!(builder.cache, CacheType::File(_, None)));
     }
 
     #[test]
@@ -482,7 +564,7 @@ mod tests {
 
     #[test]
     fn with_cache_controller_replaces_file_cache() {
-        let cache = FileCacheController::new("target").unwrap();
+        let cache = FileCacheController::new("target", None).unwrap();
         let builder = VectorTileLayerBuilder::new_rest(|_| unimplemented!())
             .with_file_cache("target")
             .with_cache_controller(cache);
@@ -493,7 +575,7 @@ mod tests {
     #[test]
     fn with_cache_controller_fails_build_if_custom_provider() {
         let provider = custom_provider();
-        let cache = FileCacheController::new("target").unwrap();
+        let cache = FileCacheController::new("target", None).unwrap();
         let result = VectorTileLayerBuilder::new_with_provider(provider)
             .with_cache_controller(cache)
             .build();
@@ -530,6 +612,9 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(*layer.tile_schema().as_ref().unwrap(), TileSchema::web(18));
+        assert_eq!(
+            *layer.tile_schema().as_ref().unwrap(),
+            TileSchemaBuilder::web_mercator(0..=18).build().unwrap()
+        );
     }
 }

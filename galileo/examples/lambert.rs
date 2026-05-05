@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use data::Country;
 use galileo::control::{EventPropagation, UserEvent, UserEventHandler};
+use galileo::layer::Layer;
 use galileo::layer::feature_layer::symbol::{SimplePolygonSymbol, Symbol};
 use galileo::layer::feature_layer::{FeatureLayer, FeatureLayerOptions};
-use galileo::layer::Layer;
 use galileo::render::render_bundle::RenderBundle;
 use galileo::{Map, MapBuilder};
 use galileo_types::cartesian::{Point2, Point3};
@@ -19,6 +19,7 @@ use galileo_types::geometry::Geom;
 use galileo_types::geometry_type::CartesianSpace2d;
 use parking_lot::{Mutex, RwLock};
 
+#[allow(dead_code)]
 mod data;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -31,7 +32,9 @@ pub(crate) fn run() {
     let map = create_map(countries_layer.clone());
     let handler = create_mouse_handler(countries_layer);
 
-    galileo_egui::init(map, [Box::new(handler) as Box<dyn UserEventHandler>])
+    galileo_egui::InitBuilder::new(map)
+        .with_handlers([Box::new(handler) as Box<dyn UserEventHandler>])
+        .init()
         .expect("failed to initialize");
 }
 
@@ -93,11 +96,11 @@ fn create_mouse_handler(
                 Some(id) => layer.update_feature(id),
             }
 
-            if let Some(old_selected) = std::mem::replace(&mut *selected_id.lock(), new_selected) {
-                if let Some(feature) = layer.features_mut().get_mut(old_selected) {
-                    feature.is_selected = false;
-                    layer.update_feature(old_selected);
-                }
+            if let Some(old_selected) = std::mem::replace(&mut *selected_id.lock(), new_selected)
+                && let Some(feature) = layer.features_mut().get_mut(old_selected)
+            {
+                feature.is_selected = false;
+                layer.update_feature(old_selected);
             }
 
             map.redraw();

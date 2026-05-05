@@ -26,6 +26,7 @@ pub struct MapView {
     rotation_z: f64,
     size: Size,
     crs: Crs,
+    dpi_scale_factor: f32,
 }
 
 impl MapView {
@@ -47,6 +48,7 @@ impl MapView {
             rotation_x: 0.0,
             size: Default::default(),
             crs,
+            dpi_scale_factor: 1.0,
         }
     }
 
@@ -68,6 +70,7 @@ impl MapView {
             rotation_x: 0.0,
             size: Default::default(),
             crs,
+            dpi_scale_factor: 1.0,
         }
     }
 
@@ -91,6 +94,15 @@ impl MapView {
         self.projected_position
     }
 
+    /// Projected position of the center point of the map (screen).
+    ///
+    /// Returns `None` if the current set position for the map center is invalid with the view
+    /// projection.
+    pub fn projected_position(&self) -> Option<Point3<f64>> {
+        self.projected_position
+    }
+
+
     /// Creates a new view same as the current one but with the given position.
     pub fn with_position(&self, position: &impl GeoPoint<Num = f64>) -> Self {
         let projected_position = self
@@ -107,13 +119,13 @@ impl MapView {
 
     /// Resolution at the center of the map.
     pub fn resolution(&self) -> f64 {
-        self.resolution
+        self.resolution * self.dpi_scale_factor as f64
     }
 
     /// Creates a new view, same as the current one, but with the given resolution.
     pub fn with_resolution(&self, resolution: f64) -> Self {
         Self {
-            resolution,
+            resolution: resolution / self.dpi_scale_factor as f64,
             crs: self.crs.clone(),
             ..*self
         }
@@ -133,6 +145,10 @@ impl MapView {
         }
     }
 
+    pub(crate) fn horizon_k(&self) -> f64 {
+        4.0
+    }
+
     /// Returns bounding rectangle of the view (in projected coordinates).
     pub fn get_bbox(&self) -> Option<Rect> {
         let points = [
@@ -149,7 +165,7 @@ impl MapView {
             position.x() + self.size.half_width() * self.resolution,
             position.y() + self.size.half_height() * self.resolution,
         )
-        .magnify(4.0);
+        .magnify(self.horizon_k());
 
         let mut bbox = max_bbox;
 
@@ -222,6 +238,72 @@ impl MapView {
         Some(scale * self.map_center_to_screen_center_transform()?)
     }
 
+    /// Returns screen point from translating the map position
+    pub fn map_to_screen(&self, map_pos: Point2) -> Option<Point2> {
+        // Get the map to scene transformation matrix
+        let transform = self.map_to_scene_transform()?;
+
+        // Convert 2D map position to homogeneous coordinates (add z=0, w=1)
+        let map_point_homogeneous =
+            nalgebra::Point3::new(map_pos.x(), map_pos.y(), 0.0).to_homogeneous();
+
+        // Transform map coordinates to scene coordinates
+        let scene_point = transform * map_point_homogeneous;
+
+        // Convert from homogeneous coordinates
+        let scene_point = scene_point.unscale(scene_point.w);
+
+        // Convert from scene coordinates [-1, 1] to screen coordinates [0, size]
+        // Scene coordinates have Y going from bottom to top, screen coordinates from top to bottom
+        let screen_x = (scene_point.x + 1.0) * self.size.width() / 2.0;
+        let screen_y = (1.0 - scene_point.y) * self.size.height() / 2.0;
+
+        Some(Point2::new(screen_x, screen_y))
+    }
+
+    /// Returns whether the screen position is visible
+    pub fn screen_point_visible(&self, screen_pos: &Point2) -> bool {
+        screen_pos.x() < 0.0
+            || screen_pos.x() > self.size.width()
+            || screen_pos.y() < 0.0
+            || screen_pos.y() > self.size.height()
+    }
+
+    /// Returns screen point from translating the map position
+    /// Clipping out of bounds to `None`
+    pub fn map_to_screen_clipped(&self, map_pos: Point2) -> Option<Point2> {
+        let screen = self.map_to_screen(map_pos)?;
+
+        // Check if the screen coordinates are within bounds
+        if self.screen_point_visible(&screen) {
+            return None;
+        }
+
+        Some(screen)
+    }
+
+    /// Converts geographic coordinates to screen coordinates.
+    pub fn map_geo_to_screen(&self, geo_position: &GeoPoint2d) -> Option<Point2> {
+        self.crs
+            .get_projection()
+            .and_then(|proj| proj.project(geo_position))
+            .and_then(|map_pos| self.map_to_screen(map_pos))
+    }
+
+    /// Returns screen point from translating the geographic map position
+    /// Clipping out of bounds to `None`
+    pub fn map_geo_to_screen_clipped(&self, geo_position: &GeoPoint2d) -> Option<Point2> {
+        let screen = self.map_geo_to_screen(geo_position)?;
+
+        // Check if the screen coordinates are within bounds
+        if self.screen_point_visible(&screen) {
+            return None;
+        }
+
+        Some(screen)
+    }
+
+
     /// Returns transformation matrix that transforms map coordinates to scene coordinates.
     ///
     /// Scene coordinates are `[-1.0, 1.0]` coordinates of the render area with *Y* going from bottom to top.
@@ -269,6 +351,20 @@ impl MapView {
         Self {
             rotation_x,
             rotation_z,
+            crs: self.crs.clone(),
+            ..*self
+        }
+    }
+
+    /// DPI scale factor.
+    pub fn dpi_scale_factor(&self) -> f32 {
+        self.dpi_scale_factor
+    }
+
+    /// Creates a new view, same as the current one, but with the given dpi_scale_factor.
+    pub fn with_dpi_scale_factor(&self, dpi_scale_factor: f32) -> Self {
+        Self {
+            dpi_scale_factor,
             crs: self.crs.clone(),
             ..*self
         }
@@ -419,6 +515,7 @@ impl MapView {
 #[cfg(test)]
 mod tests {
     use approx::assert_abs_diff_eq;
+    use galileo_types::latlon;
 
     use super::*;
 
@@ -546,5 +643,74 @@ mod tests {
             nalgebra::Point3::new(0.0, 0.0, 0.3888).to_homogeneous(),
             epsilon = 0.01
         );
+    }
+
+    #[test]
+    fn map_to_screen() {
+        let view = test_view().with_size(Size::new(100.0, 100.0));
+
+        // Test center point (0, 0) should map to center of screen
+        let screen_point = view.map_to_screen(Point2::new(0.0, 0.0)).unwrap();
+        assert_abs_diff_eq!(screen_point, Point2::new(50.0, 50.0), epsilon = 0.01);
+
+        // Test round-trip: map -> screen -> map
+        let original_map_point = Point2::new(-25.0, 25.0);
+        let screen_point = view.map_to_screen(original_map_point).unwrap();
+        let recovered_map_point = view.screen_to_map(screen_point).unwrap();
+
+        assert_abs_diff_eq!(original_map_point, recovered_map_point, epsilon = 0.01);
+
+        // Test another round-trip with different point
+        let original_map_point = Point2::new(10.0, -15.0);
+        let screen_point = view.map_to_screen(original_map_point).unwrap();
+        let recovered_map_point = view.screen_to_map(screen_point).unwrap();
+
+        assert_abs_diff_eq!(original_map_point, recovered_map_point, epsilon = 0.01);
+    }
+
+    #[test]
+    fn map_to_screen_out_of_bounds() {
+        let view = test_view().with_size(Size::new(100.0, 100.0));
+
+        // Test point that should be outside screen bounds (far left)
+        let out_of_bounds_point = Point2::new(-200.0, 0.0);
+        let screen_point = view.map_to_screen_clipped(out_of_bounds_point);
+        assert!(screen_point.is_none());
+
+        // Test point that should be outside screen bounds (far right)
+        let out_of_bounds_point = Point2::new(200.0, 0.0);
+        let screen_point = view.map_to_screen_clipped(out_of_bounds_point);
+        assert!(screen_point.is_none());
+
+        // Test point that should be outside screen bounds (far up)
+        let out_of_bounds_point = Point2::new(0.0, 200.0);
+        let screen_point = view.map_to_screen_clipped(out_of_bounds_point);
+        assert!(screen_point.is_none());
+
+        // Test point that should be outside screen bounds (far down)
+        let out_of_bounds_point = Point2::new(0.0, -200.0);
+        let screen_point = view.map_to_screen_clipped(out_of_bounds_point);
+        assert!(screen_point.is_none());
+    }
+
+    #[test]
+    fn map_geo_to_screen() {
+        let view = MapView::new(&latlon!(0.0, 0.0), 1.0).with_size(Size::new(100.0, 100.0));
+
+        // Test round-trip: screen -> geo -> screen
+        let original_screen_point = Point2::new(25.0, 75.0);
+        let geo_point = view.screen_to_map_geo(original_screen_point).unwrap();
+        let recovered_screen_point = view.map_geo_to_screen(&geo_point).unwrap();
+        assert_abs_diff_eq!(
+            original_screen_point,
+            recovered_screen_point,
+            epsilon = 0.01
+        );
+
+        // Test round-trip: geo -> screen -> geo
+        let original_geo_point = latlon!(0.001, 0.001);
+        let screen_point = view.map_geo_to_screen(&original_geo_point).unwrap();
+        let recovered_geo_point = view.screen_to_map_geo(screen_point).unwrap();
+        assert_abs_diff_eq!(original_geo_point, recovered_geo_point, epsilon = 0.0001);
     }
 }

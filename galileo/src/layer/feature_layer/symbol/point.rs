@@ -2,10 +2,10 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use galileo_types::cartesian::{CartesianPoint3d as _, Point2, Point3, Vector2, Vector3};
+use galileo_types::MultiPoint;
+use galileo_types::cartesian::{CartesianPoint3d, Point2, Point3, Vector2};
 use galileo_types::geometry::Geom;
 use galileo_types::impls::ClosedContour;
-use galileo_types::MultiPoint;
 use image::EncodableLayout;
 
 use crate::decoded_image::DecodedImage;
@@ -48,7 +48,7 @@ impl<F> Symbol<F> for CirclePointSymbol {
             }
             Geom::MultiPoint(points) => {
                 points.iter_points().for_each(|p| {
-                    bundle.add_point(p, &paint, min_resolution, view);
+                    bundle.add_point(&p, &paint, min_resolution, view);
                 });
             }
             _ => {}
@@ -99,8 +99,8 @@ impl<F> Symbol<F> for OutlinedCirclePointSymbol {
             }
             Geom::MultiPoint(points) => {
                 points.iter_points().for_each(|p| {
-                    bundle.add_point(p, &outer, min_resolution, view);
-                    bundle.add_point(p, &inner, min_resolution, view);
+                    bundle.add_point(&p, &outer, min_resolution, view);
+                    bundle.add_point(&p, &inner, min_resolution, view);
                 });
             }
             _ => {}
@@ -138,7 +138,7 @@ impl<F> Symbol<F> for ArrowPointSymbol {
                 bundle.add_point(&point, &circle, min_resolution, view);
             }
             Geom::MultiPoint(points) => {
-                points.iter_points().for_each(|&point| {
+                points.iter_points().for_each(|point| {
                     self.add_arrow_shape(
                         min_resolution,
                         bundle,
@@ -147,8 +147,8 @@ impl<F> Symbol<F> for ArrowPointSymbol {
                         self.width,
                         self.length,
                     );
-                    let point = Point3::new(point.x(), point.y(), 0.0);
-                    bundle.add_point(&point, &circle, min_resolution, view);
+                    let pt = Point3::new(point.x(), point.y(), 0.0);
+                    bundle.add_point(&pt, &circle, min_resolution, view);
                 });
             }
             // TODO: use contour or something to specify width and length
@@ -208,6 +208,7 @@ impl ArrowPointSymbol {
         );
     }
 }
+
 /// Symbol that renders a point with an image. The image size is fixed on the screen and does not depend on map
 /// resolution.
 pub struct ImagePointSymbol {
@@ -279,7 +280,7 @@ impl<F> Symbol<F> for ImagePointSymbol {
         match geometry {
             Geom::Point(point) => add_marker(point, bundle, view),
             Geom::MultiPoint(points) => points.iter_points().for_each(|point| {
-                add_marker(point, bundle, view);
+                add_marker(&point, bundle, view);
             }),
             _ => {}
         }

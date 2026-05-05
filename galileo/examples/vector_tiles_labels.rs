@@ -1,15 +1,14 @@
 //! This examples shows how to render labels for vector tile points.
 
+use galileo::layer::data_provider::remove_parameters_modifier;
 use galileo::layer::vector_tile_layer::style::{
-    VectorTileDefaultSymbol, VectorTileLabelSymbol, VectorTileStyle,
+    StyleRule, VectorTileLabelSymbol, VectorTileStyle, VectorTileSymbol, VtTextStyle,
 };
 use galileo::layer::vector_tile_layer::{VectorTileLayer, VectorTileLayerBuilder};
 use galileo::render::text::text_service::TextService;
-use galileo::render::text::{FontWeight, RustybuzzRasterizer, TextStyle};
-use galileo::tile_schema::{TileIndex, TileSchema, VerticalDirection};
-use galileo::{Color, Lod, MapBuilder};
-use galileo_types::cartesian::{Point2, Rect};
-use galileo_types::geo::Crs;
+use galileo::render::text::{FontWeight, RustybuzzRasterizer};
+use galileo::tile_schema::{TileIndex, TileSchema, TileSchemaBuilder};
+use galileo::{Color, MapBuilder};
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
@@ -31,7 +30,7 @@ pub(crate) fn run() {
             y = index.y
         )
     })
-    .with_file_cache_checked(".tile_cache")
+    .with_file_cache_modifier_checked(".tile_cache", Box::new(remove_parameters_modifier))
     .with_style(default_style())
     .with_tile_schema(tile_schema())
     .with_attribution(
@@ -42,11 +41,14 @@ pub(crate) fn run() {
     .expect("failed to create layer");
 
     let labels_style = VectorTileStyle {
-        rules: vec![],
-        default_symbol: VectorTileDefaultSymbol {
-            label: Some(VectorTileLabelSymbol {
-                pattern: "{name}".into(),
-                text_style: TextStyle {
+        rules: vec![StyleRule {
+            layer_name: None,
+            max_resolution: None,
+            min_resolution: None,
+            filter: Default::default(),
+            symbol: VectorTileSymbol::Label(VectorTileLabelSymbol {
+                pattern: String::from("{name}"),
+                text_style: VtTextStyle {
                     font_family: vec![
                         "Noto Sans".to_string(),
                         "Noto Sans Arabic".to_string(),
@@ -55,18 +57,17 @@ pub(crate) fn run() {
                         "Noto Sans KR".to_string(),
                         "Noto Sans JP".to_string(),
                     ],
-                    font_size: 12.0,
-                    font_color: Color::BLACK,
+                    font_size: 12.0.into(),
+                    font_color: Color::BLACK.into(),
                     horizontal_alignment: Default::default(),
                     vertical_alignment: Default::default(),
                     weight: FontWeight::BOLD,
                     style: Default::default(),
-                    outline_width: 2.0,
-                    outline_color: Color::WHITE,
+                    outline_width: 2.0.into(),
+                    outline_color: Color::WHITE.into(),
                 },
             }),
-            ..Default::default()
-        },
+        }],
         background: Default::default(),
     };
 
@@ -82,7 +83,9 @@ pub(crate) fn run() {
         .with_layer(label_layer)
         .build();
 
-    galileo_egui::init(map, []).expect("failed to initialize");
+    galileo_egui::InitBuilder::new(map)
+        .init()
+        .expect("failed to initialize");
 }
 
 fn initialize_font_service() {
@@ -95,28 +98,8 @@ fn default_style() -> VectorTileStyle {
 }
 
 fn tile_schema() -> TileSchema {
-    const ORIGIN: Point2 = Point2::new(-20037508.342787, 20037508.342787);
-    const TOP_RESOLUTION: f64 = 156543.03392800014 / 4.0;
-
-    let mut lods = vec![Lod::new(TOP_RESOLUTION, 0).expect("invalid config")];
-    for i in 1..16 {
-        lods.push(
-            Lod::new(lods[(i - 1) as usize].resolution() / 2.0, i).expect("invalid tile schema"),
-        );
-    }
-
-    TileSchema {
-        origin: ORIGIN,
-        bounds: Rect::new(
-            -20037508.342787,
-            -20037508.342787,
-            20037508.342787,
-            20037508.342787,
-        ),
-        lods: lods.into_iter().collect(),
-        tile_width: 1024,
-        tile_height: 1024,
-        y_direction: VerticalDirection::TopToBottom,
-        crs: Crs::EPSG3857,
-    }
+    TileSchemaBuilder::web_mercator(2..16)
+        .rect_tile_size(1024)
+        .build()
+        .expect("invalid tile schema")
 }

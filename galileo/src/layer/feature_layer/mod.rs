@@ -8,8 +8,8 @@ use std::sync::Arc;
 use galileo_types::cartesian::{
     CartesianPoint2d, NewCartesianPoint2d, NewCartesianPoint3d, Point2, Point3, Rect,
 };
-use galileo_types::geo::impls::projection::{AddDimensionProjection, IdentityProjection};
 use galileo_types::geo::impls::GeoPoint2d;
+use galileo_types::geo::impls::projection::{AddDimensionProjection, IdentityProjection};
 use galileo_types::geo::{ChainProjection, Crs, InvertedProjection, NewGeoPoint, Projection};
 use galileo_types::geometry::{CartesianGeometry2d, Geometry};
 use galileo_types::geometry_type::{CartesianSpace2d, CartesianSpace3d, GeoSpace2d};
@@ -17,8 +17,8 @@ use maybe_sync::{MaybeSend, MaybeSync};
 use num_traits::AsPrimitive;
 use parking_lot::{Mutex, RwLock};
 
-use crate::layer::attribution::Attribution;
 use crate::layer::Layer;
+use crate::layer::attribution::Attribution;
 use crate::messenger::Messenger;
 use crate::render::{Canvas, RenderOptions};
 use crate::view::MapView;
@@ -56,7 +56,7 @@ where
     symbol: S,
     crs: Crs,
     lods: Vec<Lod>,
-    messenger: RwLock<Option<Box<dyn Messenger>>>,
+    messenger: RwLock<Option<Arc<dyn Messenger>>>,
     options: FeatureLayerOptions,
 
     rendered_center: Arc<Mutex<Option<Point3>>>,
@@ -237,6 +237,7 @@ where
     ) {
         let lod = self.select_lod(view.resolution());
         let mut store = lod.bundles.lock();
+        let dpi_scale_factor = view.dpi_scale_factor();
 
         let mut required_update = store.required_update();
         let projcenter = view.projected_center().expect("Valid MapView");
@@ -250,19 +251,22 @@ where
         match required_update {
             UpdateType::All => {
                 for (id, feature) in self.features.iter() {
-                    store.with_bundle(|bundle| {
-                        if let Some(projected) = feature.geometry().project(&*projection) {
-                            self.symbol.render(
-                                feature,
-                                &projected,
-                                lod.min_resolution,
-                                bundle,
-                                view,
-                            );
-                        }
+                    store.with_bundle(
+                        |bundle| {
+                            if let Some(projected) = feature.geometry().project(&*projection) {
+                                self.symbol.render(
+                                    feature,
+                                    &projected,
+                                    lod.min_resolution,
+                                    bundle,
+                                    view,
+                                );
+                            }
 
-                        id
-                    });
+                            id
+                        },
+                        dpi_scale_factor,
+                    );
                 }
             }
             UpdateType::Selected(ids) => {
@@ -270,19 +274,22 @@ where
                     let Some(feature) = self.features.get(id) else {
                         continue;
                     };
-                    store.with_bundle(|bundle| {
-                        if let Some(projected) = feature.geometry().project(&*projection) {
-                            self.symbol.render(
-                                feature,
-                                &projected,
-                                lod.min_resolution,
-                                bundle,
-                                view,
-                            );
-                        }
+                    store.with_bundle(
+                        |bundle| {
+                            if let Some(projected) = feature.geometry().project(&*projection) {
+                                self.symbol.render(
+                                    feature,
+                                    &projected,
+                                    lod.min_resolution,
+                                    bundle,
+                                    view,
+                                );
+                            }
 
-                        id
-                    });
+                            id
+                        },
+                        dpi_scale_factor,
+                    );
                 }
             }
             UpdateType::None => {}
@@ -397,7 +404,7 @@ where
         // do nothing
     }
 
-    fn set_messenger(&mut self, messenger: Box<dyn Messenger>) {
+    fn set_messenger(&mut self, messenger: Arc<dyn Messenger>) {
         *self.messenger.write() = Some(messenger);
     }
 
@@ -460,7 +467,7 @@ where
         // do nothing
     }
 
-    fn set_messenger(&mut self, messenger: Box<dyn Messenger>) {
+    fn set_messenger(&mut self, messenger: Arc<dyn Messenger>) {
         *self.messenger.write() = Some(messenger);
     }
 
@@ -512,7 +519,7 @@ where
         // do nothing
     }
 
-    fn set_messenger(&mut self, messenger: Box<dyn Messenger>) {
+    fn set_messenger(&mut self, messenger: Arc<dyn Messenger>) {
         *self.messenger.write() = Some(messenger);
     }
 

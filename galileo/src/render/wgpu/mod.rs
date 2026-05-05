@@ -1,39 +1,49 @@
 use std::any::Any;
 use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
 use std::mem::size_of;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use ahash::HashMap;
 use cfg_if::cfg_if;
-use galileo_types::cartesian::{Point3, Rect, Size};
+use effects::horizon::HorizonPipeline;
+use galileo_types::cartesian::{Point3, Rect, Size, Vector2};
 use lyon::tessellation::VertexBuffers;
 use nalgebra::{Point4, Rotation3, Vector3};
 use parking_lot::Mutex;
 use wgpu::util::DeviceExt;
 use wgpu::{
-    Adapter, Buffer, BufferAddress, BufferDescriptor, BufferUsages, Device, Extent3d, Origin3d,
-    Queue, RenderPassDepthStencilAttachment, StoreOp, Surface, SurfaceConfiguration, SurfaceError,
+    Adapter, BindGroup, Buffer, BufferAddress, BufferDescriptor, BufferUsages,
+    COPY_BYTES_PER_ROW_ALIGNMENT, CurrentSurfaceTexture, Device, Extent3d, Origin3d, Queue,
+    RenderPassDepthStencilAttachment, StoreOp, Surface, SurfaceConfiguration, SurfaceStatus,
     SurfaceTexture, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture,
     TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
     TextureViewDescriptor, WasmNotSendSync,
 };
 
 use super::render_bundle::screen_set::{RenderSetState, ScreenSetData};
-use super::{Canvas, PackedBundle, RenderOptions};
+use super::{BundleToDraw, Canvas, PackedBundle, RenderOptions};
+use crate::Color;
+use crate::decoded_image::DecodedImage;
 use crate::error::GalileoError;
 use crate::map::Map;
-use crate::render::render_bundle::world_set::{PointInstance, PolyVertex, WorldRenderSet};
 use crate::render::render_bundle::RenderBundle;
-use crate::render::wgpu::pipelines::image::WgpuImage;
+use crate::render::render_bundle::world_set::{PointInstance, PolyVertex, WorldRenderSet};
 use crate::render::wgpu::pipelines::Pipelines;
+use crate::render::wgpu::pipelines::image::WgpuImage;
 use crate::view::MapView;
-use crate::Color;
 
+mod effects;
 mod pipelines;
+
+pub use effects::horizon::HorizonOptions;
 
 const DEFAULT_BACKGROUND: Color = Color::WHITE;
 const DEPTH_FORMAT: TextureFormat = TextureFormat::Depth24PlusStencil8;
-const TARGET_TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
+const TARGET_TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
+
+type TexturesMap = HashMap<u64, (Weak<DecodedImage>, Arc<BindGroup>)>;
 
 /// Render backend that uses `wgpu` crate to render the map.
 pub struct WgpuRenderer {
@@ -41,6 +51,8 @@ pub struct WgpuRenderer {
     queue: Queue,
     renderer_targets: Option<RendererTargets>,
     background: Color,
+    textures: Mutex<TexturesMap>,
+    horizon_options: Option<HorizonOptions>,
 }
 
 struct RendererTargets {
@@ -49,6 +61,7 @@ struct RendererTargets {
     multisampling_view: TextureView,
     stencil_view_multisample: TextureView,
     stencil_view: TextureView,
+    horizon_effect: Option<HorizonPipeline>,
 }
 
 enum RenderTarget {
@@ -81,10 +94,19 @@ impl RenderTargetTexture<'_> {
 }
 
 impl RenderTarget {
-    fn texture(&self) -> Result<RenderTargetTexture, SurfaceError> {
+    fn texture(&self) -> Result<RenderTargetTexture<'_>, SurfaceStatus> {
         match &self {
             RenderTarget::Surface { surface, .. } => {
-                Ok(RenderTargetTexture::Surface(surface.get_current_texture()?))
+                let texture = match surface.get_current_texture() {
+                    CurrentSurfaceTexture::Success(texture) => texture,
+                    CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                    CurrentSurfaceTexture::Lost => return Err(SurfaceStatus::Lost),
+                    CurrentSurfaceTexture::Occluded => return Err(SurfaceStatus::Occluded),
+                    CurrentSurfaceTexture::Outdated => return Err(SurfaceStatus::Outdated),
+                    CurrentSurfaceTexture::Timeout => return Err(SurfaceStatus::Timeout),
+                    CurrentSurfaceTexture::Validation => return Err(SurfaceStatus::Validation),
+                };
+                Ok(RenderTargetTexture::Surface(texture))
             }
             RenderTarget::Texture(texture, _) => Ok(RenderTargetTexture::Texture(texture)),
         }
@@ -117,7 +139,8 @@ impl WgpuRenderer {
                 compatible_surface: None,
                 force_fallback_adapter: false,
             })
-            .await?;
+            .await
+            .ok()?;
 
         let (device, queue) = Self::create_device(&adapter).await;
 
@@ -126,6 +149,8 @@ impl WgpuRenderer {
             queue,
             renderer_targets: None,
             background: DEFAULT_BACKGROUND,
+            textures: Default::default(),
+            horizon_options: Some(HorizonOptions::default()),
         })
     }
 
@@ -136,6 +161,8 @@ impl WgpuRenderer {
             queue,
             renderer_targets: None,
             background: DEFAULT_BACKGROUND,
+            textures: Default::default(),
+            horizon_options: Some(HorizonOptions::default()),
         }
     }
 
@@ -193,6 +220,7 @@ impl WgpuRenderer {
                 multisampling_view,
                 stencil_view_multisample,
                 stencil_view,
+                horizon_effect,
             }) if new_target.size() == render_target.size() => {
                 let pipelines = if new_target.format() == render_target.format() {
                     pipelines
@@ -206,6 +234,7 @@ impl WgpuRenderer {
                     multisampling_view,
                     stencil_view_multisample,
                     stencil_view,
+                    horizon_effect,
                 })
             }
             _ => self.renderer_targets = Some(self.create_renderer_targets(new_target)),
@@ -222,12 +251,22 @@ impl WgpuRenderer {
 
         let pipelines = Pipelines::create(&self.device, format);
 
+        let horizon_effect = self.horizon_options.map(|options| {
+            HorizonPipeline::create(
+                &self.device,
+                format,
+                &pipelines.map_view_bind_group_layout,
+                options,
+            )
+        });
+
         RendererTargets {
             render_target,
             pipelines,
             multisampling_view,
             stencil_view_multisample,
             stencil_view,
+            horizon_effect,
         }
     }
 
@@ -281,7 +320,8 @@ impl WgpuRenderer {
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
-            .await?;
+            .await
+            .ok()?;
         Some((surface, adapter))
     }
 
@@ -291,16 +331,10 @@ impl WgpuRenderer {
         size: Size<u32>,
     ) -> SurfaceConfiguration {
         let surface_caps = surface.get_capabilities(adapter);
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
 
         SurfaceConfiguration {
             usage: TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
+            format: TARGET_TEXTURE_FORMAT,
             width: size.width(),
             height: size.height(),
             present_mode: surface_caps.present_modes[0],
@@ -323,6 +357,8 @@ impl WgpuRenderer {
             queue,
             renderer_targets: None,
             background: DEFAULT_BACKGROUND,
+            textures: Default::default(),
+            horizon_options: Some(HorizonOptions::default()),
         };
         renderer.init_renderer_targets(render_target);
 
@@ -337,6 +373,8 @@ impl WgpuRenderer {
             queue,
             renderer_targets: None,
             background: DEFAULT_BACKGROUND,
+            textures: Default::default(),
+            horizon_options: Some(HorizonOptions::default()),
         };
 
         renderer.init_target_texture(size);
@@ -363,30 +401,32 @@ impl WgpuRenderer {
             }
         }
 
-        wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends,
-            ..Default::default()
+            flags: Default::default(),
+            memory_budget_thresholds: Default::default(),
+            backend_options: Default::default(),
+            display: None,
         })
     }
 
     async fn create_device(adapter: &Adapter) -> (Device, Queue) {
         adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::empty(),
-                    required_limits: if cfg!(any(target_arch = "wasm32", target_os = "android")) {
-                        wgpu::Limits {
-                            max_texture_dimension_2d: 4096,
-                            ..wgpu::Limits::downlevel_webgl2_defaults()
-                        }
-                    } else {
-                        wgpu::Limits::default()
-                    },
-                    label: None,
-                    memory_hints: Default::default(),
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: if cfg!(any(target_arch = "wasm32", target_os = "android")) {
+                    wgpu::Limits {
+                        max_texture_dimension_2d: 4096,
+                        ..wgpu::Limits::downlevel_webgl2_defaults()
+                    }
+                } else {
+                    wgpu::Limits::default()
                 },
-                None,
-            )
+                label: None,
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            })
             .await
             .expect("Failed to obtain WGPU device")
     }
@@ -528,13 +568,21 @@ impl WgpuRenderer {
     }
 
     /// Returns the image of the last render operation.
-    pub async fn get_image(&self) -> Result<Vec<u8>, SurfaceError> {
+    pub async fn get_image(&self) -> Result<Vec<u8>, SurfaceStatus> {
         let Some(renderer_targets) = &self.renderer_targets else {
-            return Err(SurfaceError::Lost);
+            return Err(SurfaceStatus::Lost);
         };
 
-        let size = renderer_targets.render_target.size();
-        let buffer_size = (size.width() * size.height() * size_of::<u32>() as u32) as BufferAddress;
+        let render_target_size = renderer_targets.render_target.size();
+
+        const RGBA_BYTES_PER_PIXEL: u32 = 4;
+        let bytes_per_row = render_target_size.width() * RGBA_BYTES_PER_PIXEL;
+        let bytes_per_row_aligned = match bytes_per_row / COPY_BYTES_PER_ROW_ALIGNMENT {
+            0 => bytes_per_row,
+            v => (v + 1) * COPY_BYTES_PER_ROW_ALIGNMENT,
+        };
+
+        let buffer_size = (bytes_per_row_aligned * render_target_size.height()) as BufferAddress;
         let buffer_desc = BufferDescriptor {
             size: buffer_size,
             usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
@@ -559,13 +607,13 @@ impl WgpuRenderer {
                 buffer: &buffer,
                 layout: TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(size_of::<u32>() as u32 * size.width()),
-                    rows_per_image: Some(size.height()),
+                    bytes_per_row: Some(bytes_per_row_aligned),
+                    rows_per_image: Some(render_target_size.height()),
                 },
             },
             Extent3d {
-                width: size.width(),
-                height: size.height(),
+                width: render_target_size.width(),
+                height: render_target_size.height(),
                 depth_or_array_layers: 1,
             },
         );
@@ -579,23 +627,47 @@ impl WgpuRenderer {
                 log::error!("Failed to send by channel: {err:?}");
             }
         });
-        self.device.poll(wgpu::Maintain::Wait);
+
+        if let Err(err) = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(60)),
+        }) {
+            log::error!("polling device failed: {err:?}");
+        }
+
         match rx.receive().await {
             Some(result) => match result {
                 Ok(()) => {}
                 Err(err) => {
                     log::error!("Writing to image buffer failed: {err:?}.");
-                    return Err(SurfaceError::Lost);
+                    return Err(SurfaceStatus::Lost);
                 }
             },
             None => {
                 log::error!("Channel was closed");
-                return Err(SurfaceError::Lost);
+                return Err(SurfaceStatus::Lost);
             }
         }
 
         let data = buffer_slice.get_mapped_range();
-        Ok(data.to_vec())
+        let mut pixels = vec![
+            0u8;
+            (render_target_size.width() * render_target_size.height() * RGBA_BYTES_PER_PIXEL)
+                as usize
+        ];
+
+        for row_index in 0..render_target_size.height() {
+            let first_byte_index_buf = (row_index * bytes_per_row_aligned) as usize;
+            let last_byte_index_buf = first_byte_index_buf + bytes_per_row as usize;
+
+            let first_byte_index_pix = (row_index * bytes_per_row) as usize;
+            let last_byte_index_pix = first_byte_index_pix + bytes_per_row as usize;
+
+            pixels[first_byte_index_pix..last_byte_index_pix]
+                .copy_from_slice(&data[first_byte_index_buf..last_byte_index_buf]);
+        }
+
+        Ok(pixels)
     }
 
     /// Renders the map to the given texture.
@@ -613,6 +685,7 @@ impl WgpuRenderer {
                     label: Some("Render Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &renderer_targets.multisampling_view,
+                        depth_slice: None,
                         resolve_target: Some(view),
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -627,6 +700,7 @@ impl WgpuRenderer {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
             }
 
@@ -639,17 +713,19 @@ impl WgpuRenderer {
     }
 
     /// Renders the map. `render_texture` and always present
-    pub fn render(&self, map: &Map) -> Result<(), SurfaceError> {
+    pub fn render(&self, map: &Map) -> Result<(), SurfaceStatus> {
         self.render_texture(map, true)?;
 
         Ok(())
     }
 
     /// Renders the map and optionally present
-    pub fn render_texture(&self, map: &Map, present: bool) -> Result<(), SurfaceError> {
+    pub fn render_texture(&self, map: &Map, present: bool) -> Result<(), SurfaceStatus> {
         let Some(renderer_targets) = &self.renderer_targets else {
             return Ok(());
         };
+
+        self.trim_textures();
 
         let texture = renderer_targets.render_target.texture()?;
         let view = texture.view();
@@ -695,6 +771,81 @@ impl WgpuRenderer {
         if needs_animation {
             map.redraw();
         }
+
+        self.draw_horizon(view, renderer_targets, texture_view);
+    }
+
+    /// Returns options of the horizon effect used by the renderer.
+    pub fn horizon_options(&self) -> &Option<HorizonOptions> {
+        &self.horizon_options
+    }
+
+    /// Updates the options of the horizon effect.
+    ///
+    /// If `None` is given, the effect will not be used.
+    pub fn set_horizon_options(&mut self, options: Option<HorizonOptions>) {
+        self.horizon_options = options;
+        if let Some(targets) = &mut self.renderer_targets {
+            targets.horizon_effect = options.map(|op| {
+                HorizonPipeline::create(
+                    &self.device,
+                    targets.render_target.format(),
+                    &targets.pipelines.map_view_bind_group_layout,
+                    op,
+                )
+            });
+        }
+    }
+
+    fn draw_horizon(
+        &self,
+        view: &MapView,
+        renderer_targets: &RendererTargets,
+        texture_view: &TextureView,
+    ) {
+        let Some(pipeline) = &renderer_targets.horizon_effect else {
+            return;
+        };
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Horizon Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: texture_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: &renderer_targets.stencil_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: StoreOp::Discard,
+                    }),
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: StoreOp::Discard,
+                    }),
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            renderer_targets.pipelines.set_bindings(&mut render_pass);
+            pipeline.render(view, &self.queue, &mut render_pass, 0);
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
     }
 
     /// Returns the size of the rendering area.
@@ -706,16 +857,47 @@ impl WgpuRenderer {
 
         Size::new(size.width() as f64, size.height() as f64)
     }
+
+    /// Deallocates all unneeded textures.
+    ///
+    /// A texture is considered unneeded if there are no rereferences left to the underlying image.
+    pub fn trim_textures(&self) {
+        self.textures
+            .lock()
+            .retain(|_, (image_ref, _)| image_ref.strong_count() > 0);
+    }
+
+    fn get_or_create_image_texture(&self, image: &Arc<DecodedImage>) -> Arc<BindGroup> {
+        let mut hasher = ahash::AHasher::default();
+        image.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        if let Some((_, texture)) = self.textures.lock().get(&hash) {
+            return texture.clone();
+        }
+
+        let texture = self
+            .renderer_targets
+            .as_ref()
+            .expect("trying to use pipelines of uninitialized renderer")
+            .pipelines
+            .create_image_texture(&self.device, &self.queue, image);
+
+        self.textures
+            .lock()
+            .insert(hash, (Arc::downgrade(image), texture.clone()));
+
+        texture
+    }
 }
 
-#[allow(dead_code)]
 struct WgpuCanvas<'a> {
     renderer: &'a WgpuRenderer,
     renderer_targets: &'a RendererTargets,
     view: &'a TextureView,
     map_view: MapView,
 
-    screen_sets: Vec<Arc<Mutex<WgpuScreenSet>>>,
+    screen_sets: Vec<(Arc<Mutex<WgpuScreenSet>>, f32, Vector2<f32>)>,
 }
 
 impl<'a> WgpuCanvas<'a> {
@@ -783,16 +965,7 @@ impl Canvas for WgpuCanvas<'_> {
         ))
     }
 
-    fn draw_bundles(&mut self, bundles: &[&dyn PackedBundle], options: RenderOptions) {
-        let with_opacity: Vec<_> = bundles.iter().map(|bundle| (*bundle, 1.0)).collect();
-        self.draw_bundles_with_opacity(&with_opacity, options);
-    }
-
-    fn draw_bundles_with_opacity(
-        &mut self,
-        bundles: &[(&dyn PackedBundle, f32)],
-        options: RenderOptions,
-    ) {
+    fn draw_bundles(&mut self, bundles: &[super::BundleToDraw], options: RenderOptions) {
         if bundles.is_empty() {
             log::debug!("Requested drawing of 0 bundles");
             return;
@@ -820,6 +993,7 @@ impl Canvas for WgpuCanvas<'_> {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
+                    depth_slice: None,
                     resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
@@ -839,6 +1013,7 @@ impl Canvas for WgpuCanvas<'_> {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let [cx, cy, cz] = self
@@ -848,17 +1023,24 @@ impl Canvas for WgpuCanvas<'_> {
                 .array();
 
             let mut instances = Vec::with_capacity(bundles.len());
-            for (bundle, opacity) in bundles {
+            for BundleToDraw {
+                bundle,
+                opacity,
+                offset,
+            } in bundles
+            {
                 if let Some(cast) = bundle.as_any().downcast_ref::<WgpuPackedBundle>() {
                     let [ax, ay, az] = cast.anchor;
                     instances.push(DisplayInstance {
                         anchor: [(ax - cx) as f32, (ay - cy) as f32, (az - cz) as f32],
                         opacity: *opacity,
+                        offset: [offset.dx(), offset.dy(), 0.0],
                     });
                 } else {
                     instances.push(DisplayInstance {
                         anchor: [0.0, 0.0, 0.0],
                         opacity: *opacity,
+                        offset: [offset.dx(), offset.dy(), 0.0],
                     });
                 }
             }
@@ -873,7 +1055,15 @@ impl Canvas for WgpuCanvas<'_> {
                     });
             render_pass.set_vertex_buffer(1, display_buffer.slice(..));
 
-            for (index, (bundle, _)) in bundles.iter().enumerate() {
+            for (
+                index,
+                BundleToDraw {
+                    bundle,
+                    opacity,
+                    offset,
+                },
+            ) in bundles.iter().enumerate()
+            {
                 if let Some(cast) = bundle.as_any().downcast_ref::<WgpuPackedBundle>() {
                     self.renderer_targets.pipelines.render(
                         &mut render_pass,
@@ -883,7 +1073,8 @@ impl Canvas for WgpuCanvas<'_> {
                     );
 
                     for screen_set in &cast.screen_sets {
-                        self.screen_sets.push(screen_set.clone());
+                        self.screen_sets
+                            .push((screen_set.clone(), *opacity, *offset));
                     }
                 }
             }
@@ -909,18 +1100,24 @@ impl Canvas for WgpuCanvas<'_> {
         let screen_sets = std::mem::take(&mut self.screen_sets);
         let mut sets: Vec<_> = screen_sets
             .iter()
-            .map(|set| {
-                let locked = set.lock();
+            .filter_map(|(set, _, offset)| {
+                let Some(locked) = set.try_lock() else {
+                    // TODO: this means that the same tile is reused. We just wait for it to
+                    // disappear from the map. This would result in some visual bugs, but not so
+                    // critical as to be blocked by it ATM.
+                    return None;
+                };
+
                 let projected_anchor = transform
                     * Point4::new(
-                        locked.anchor_point[0] as f64,
-                        locked.anchor_point[1] as f64,
+                        locked.anchor_point[0] as f64 + offset.dx() as f64,
+                        locked.anchor_point[1] as f64 + offset.dy() as f64,
                         locked.anchor_point[2] as f64,
                         1.0,
                     );
                 let normalaized = projected_anchor / projected_anchor.w.abs();
 
-                (locked, normalaized)
+                Some((locked, normalaized, offset))
             })
             .collect();
         sets.sort_by(|a, b| {
@@ -941,7 +1138,7 @@ impl Canvas for WgpuCanvas<'_> {
         let mut displayed: Vec<Rect<f32>> = vec![];
         let mut filtered_sets: Vec<_> = sets
             .into_iter()
-            .filter_map(|(mut set, anchor)| {
+            .filter_map(|(mut set, anchor, offset)| {
                 if anchor.w <= 0.0 {
                     // The point is in imaginary plane
                     return None;
@@ -963,15 +1160,15 @@ impl Canvas for WgpuCanvas<'_> {
                                 start_time: fade_out_start_time,
                             };
 
-                            Some(set)
+                            Some((set, offset))
                         }
                         RenderSetState::Displayed => {
                             set.state = RenderSetState::FadingOut {
                                 start_time: web_time::Instant::now(),
                             };
-                            Some(set)
+                            Some((set, offset))
                         }
-                        RenderSetState::FadingOut { .. } => Some(set),
+                        RenderSetState::FadingOut { .. } => Some((set, offset)),
                     }
                 } else {
                     // Showing the set
@@ -993,7 +1190,7 @@ impl Canvas for WgpuCanvas<'_> {
                         _ => {}
                     }
 
-                    Some(set)
+                    Some((set, offset))
                 }
             })
             .collect();
@@ -1015,6 +1212,7 @@ impl Canvas for WgpuCanvas<'_> {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
+                    depth_slice: None,
                     resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
@@ -1034,11 +1232,12 @@ impl Canvas for WgpuCanvas<'_> {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
-            let instances: Vec<ScreenSetInstance> = filtered_sets
+            let instances: Vec<DisplayInstance> = filtered_sets
                 .iter_mut()
-                .map(|set| {
+                .map(|(set, offset)| {
                     let opacity = match set.state {
                         RenderSetState::Hidden => 0.0,
                         RenderSetState::FadingIn { start_time } => {
@@ -1084,7 +1283,11 @@ impl Canvas for WgpuCanvas<'_> {
                         .expect("Rendering requires a valid projection")
                         .array();
                     let anchor = [(ax - cx) as f32, (ay - cy) as f32, (az - cz) as f32];
-                    ScreenSetInstance { anchor, opacity }
+                    DisplayInstance {
+                        anchor,
+                        opacity,
+                        offset: [offset.dx(), offset.dy(), 0.0],
+                    }
                 })
                 .collect();
 
@@ -1101,7 +1304,7 @@ impl Canvas for WgpuCanvas<'_> {
 
             for (index, set) in filtered_sets.iter().enumerate().rev() {
                 self.renderer_targets.pipelines.render_screen_set(
-                    &set.data,
+                    &set.0.data,
                     &mut render_pass,
                     index as u32,
                 );
@@ -1196,13 +1399,7 @@ impl WgpuPackedBundle {
 
         let textures: Vec<_> = image_store
             .iter()
-            .map(|decoded_image| {
-                Some(renderer_targets.pipelines.create_image_texture(
-                    &renderer.device,
-                    &renderer.queue,
-                    decoded_image,
-                ))
-            })
+            .map(|decoded_image| renderer.get_or_create_image_texture(decoded_image))
             .collect();
 
         let mut image_buffers = vec![];
@@ -1213,8 +1410,6 @@ impl WgpuPackedBundle {
                 textures
                     .get(image_info.store_index)
                     .expect("texture at index must exist")
-                    .clone()
-                    .expect("image texture must not be None")
                     .clone(),
                 &image_info.vertices,
             );
@@ -1252,11 +1447,7 @@ impl WgpuPackedBundle {
                     WgpuScreenSetData::Vertex(buffers)
                 }
                 ScreenSetData::Image { vertices, bitmap } => {
-                    let bind_group = renderer_targets.pipelines.create_image_texture(
-                        &renderer.device,
-                        &renderer.queue,
-                        bitmap,
-                    );
+                    let bind_group = renderer.get_or_create_image_texture(bitmap);
                     let image = renderer_targets
                         .pipelines
                         .screen_set_image_pipeline()
@@ -1390,6 +1581,7 @@ impl PolyVertex {
 struct DisplayInstance {
     pub anchor: [f32; 3],
     pub opacity: f32,
+    pub offset: [f32; 3],
 }
 
 impl DisplayInstance {
@@ -1408,33 +1600,10 @@ impl DisplayInstance {
                     shader_location: 11,
                     format: wgpu::VertexFormat::Float32,
                 },
-            ],
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct ScreenSetInstance {
-    anchor: [f32; 3],
-    opacity: f32,
-}
-
-impl ScreenSetInstance {
-    fn wgpu_desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<ScreenSetInstance>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
                 wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 10,
+                    offset: (size_of::<[f32; 3]>() + size_of::<f32>()) as wgpu::BufferAddress,
+                    shader_location: 12,
                     format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 11,
-                    format: wgpu::VertexFormat::Float32,
                 },
             ],
         }

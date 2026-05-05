@@ -1,17 +1,18 @@
 //! Vector tile layer tile providers
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use galileo_mvt::MvtTile;
 use loader::VectorTileLoader;
 use parking_lot::RwLock;
 use processor::VectorTileProcessor;
 
+use crate::layer::tiles::TileProvider;
 use crate::layer::vector_tile_layer::style::VectorTileStyle;
 use crate::messenger::Messenger;
 use crate::render::{Canvas, PackedBundle};
-use crate::tile_schema::TileIndex;
+use crate::tile_schema::{TileIndex, WrappingTileIndex};
 
 pub mod loader;
 pub mod processor;
@@ -51,6 +52,16 @@ impl Clone for VectorTileProvider {
             processor: self.processor.clone(),
             messenger: self.messenger.clone(),
         }
+    }
+}
+
+impl TileProvider<VtStyleId> for VectorTileProvider {
+    fn get_tile(
+        &self,
+        index: WrappingTileIndex,
+        style_id: VtStyleId,
+    ) -> Option<Arc<dyn PackedBundle>> {
+        VectorTileProvider::get_tile(self, index.into(), style_id)
     }
 }
 
@@ -165,8 +176,8 @@ impl VectorTileProvider {
     }
 
     /// Set messenger to use to notify about tile updates.
-    pub fn set_messenger(&mut self, messenger: Box<dyn Messenger>) {
-        self.messenger = Some(messenger.into());
+    pub fn set_messenger(&mut self, messenger: Arc<dyn Messenger>) {
+        self.messenger = Some(messenger);
     }
 
     /// Notifies the messenger about a change to be processed by the map.

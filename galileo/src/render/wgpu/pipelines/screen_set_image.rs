@@ -5,8 +5,8 @@ use wgpu::{BindGroup, BindGroupLayout, Device, RenderPass, RenderPipeline, Textu
 
 use super::image::WgpuImage;
 use crate::render::render_bundle::screen_set::ScreenSetImageVertex;
+use crate::render::wgpu::DisplayInstance;
 use crate::render::wgpu::pipelines::{default_pipeline_descriptor, default_targets};
-use crate::render::wgpu::ScreenSetInstance;
 
 const INDICES: &[u16] = &[1, 0, 2, 1, 2, 3];
 
@@ -45,7 +45,7 @@ impl ScreenSetImagePipeline {
     ) -> Self {
         let buffers = [
             ScreenSetImageVertex::wgpu_desc(),
-            ScreenSetInstance::wgpu_desc(),
+            DisplayInstance::wgpu_desc(),
         ];
         let shader =
             device.create_shader_module(wgpu::include_wgsl!("./shaders/screen_set_image.wgsl"));
@@ -53,8 +53,8 @@ impl ScreenSetImagePipeline {
         let targets = default_targets(format);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[map_view_layout, texture_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(map_view_layout), Some(texture_bind_group_layout)],
+            immediate_size: 0,
         });
         let mut desc = default_pipeline_descriptor(&layout, &shader, &targets, &buffers, false);
 

@@ -9,12 +9,13 @@
 
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
-use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
+use anyhow::{Result, anyhow};
 use galileo::layer::FeatureLayer;
+use galileo::layer::raster_tile_layer::RasterTileLayerBuilder;
 use galileo::render::WgpuRenderer;
 use galileo::symbol::ArbitraryGeometrySymbol;
-use galileo::{Map, MapView, Messenger, TileSchema};
+use galileo::tile_schema::TileSchemaBuilder;
+use galileo::{Map, MapView, Messenger};
 use galileo_types::cartesian::Size;
 use galileo_types::geo::Crs;
 use geojson::{FeatureCollection, GeoJson};
@@ -53,14 +54,16 @@ async fn main() -> Result<()> {
         .expect("cannot project extent");
     let center = extent.center();
 
-    let image_size = Size::new(512, 512);
+    let image_size = Size::new(400, 400);
 
     let width_resolution = extent.width() / image_size.width() as f64;
     let height_resolution = extent.height() / image_size.height() as f64;
     let resolution = (width_resolution.max(height_resolution) * 1.1).max(
-        TileSchema::web(18)
+        TileSchemaBuilder::web_mercator(0..=18)
+            .build()
+            .expect("default tile schema is valid")
             .lod_resolution(17)
-            .expect("invalid tile schema"),
+            .expect("the tile schema has resolution for zoom level 17"),
     );
 
     // Create OSM layer for background

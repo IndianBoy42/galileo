@@ -2,9 +2,7 @@
   "rules": [
     {
       "layer_name": "park",
-      "properties": {
-        "class": "protected_area"
-      }
+      "filter": "class == 'protected_area'"
     },
     {
       "layer_name": "boundary",
@@ -15,9 +13,7 @@
           "width": 1.6
         }
       },
-      "properties": {
-        "admin_level": "2"
-      }
+      "filter": "admin_level == 2"
     },
     {
       "layer_name": "boundary",
@@ -28,9 +24,7 @@
           "width": 1.0
         }
       },
-      "properties": {
-        "admin_level": "3"
-      }
+      "filter": "admin_level == 3"
     },
     {
       "layer_name": "boundary",
@@ -40,8 +34,7 @@
           "miter_limit": 1,
           "width": 1.0
         }
-      },
-      "properties": {}
+      }
     },
     {
       "layer_name": "landcover",
@@ -50,9 +43,7 @@
           "fill_color": "#3c3c3c00"
         }
       },
-      "properties": {
-        "class": "ice"
-      }
+      "filter": "class == 'ice'"
     },
     {
       "layer_name": "water",
@@ -61,9 +52,7 @@
           "fill_color": "#81C4EC"
         }
       },
-      "properties": {
-        "class": "ocean"
-      }
+      "filter": "class == 'ocean'"
     },
     {
       "layer_name": "water",
@@ -72,9 +61,7 @@
           "fill_color": "#759ec7"
         }
       },
-      "properties": {
-        "class": "lake"
-      }
+      "filter": "class == 'lake'"
     },
     {
       "layer_name": "water",
@@ -83,9 +70,7 @@
           "fill_color": "#b8dff5"
         }
       },
-      "properties": {
-        "class": "river"
-      }
+      "filter": "class == 'river'"
     },
     {
       "layer_name": "landcover",
@@ -94,9 +79,7 @@
           "fill_color": "#C1E3C4"
         }
       },
-      "properties": {
-        "class": "wood"
-      }
+      "filter": "class == 'wood'"
     },
     {
       "layer_name": "transportation",
@@ -107,9 +90,7 @@
           "width": 1.0
         }
       },
-      "properties": {
-        "class": "service"
-      }
+      "filter": "class == 'service'"
     },
     {
       "layer_name": "building",
@@ -117,8 +98,7 @@
         "polygon": {
           "fill_color": "#cfab7f"
         }
-      },
-      "properties": {}
+      }
     },
     {
       "layer_name": "transportation",
@@ -129,9 +109,7 @@
           "width": 1.2
         }
       },
-      "properties": {
-        "class": "primary"
-      }
+      "filter": "class == 'primary'"
     },
     {
       "layer_name": "transportation",
@@ -142,9 +120,7 @@
           "width": 1.2
         }
       },
-      "properties": {
-        "class": "rail"
-      }
+      "filter": "class == 'rail'"
     },
     {
       "layer_name": "transportation",
@@ -155,9 +131,7 @@
           "width": 1.2
         }
       },
-      "properties": {
-        "class": "trunk"
-      }
+      "filter": "class == 'trunk'"
     },
     {
       "layer_name": "transportation",
@@ -168,9 +142,7 @@
           "width": 1.5
         }
       },
-      "properties": {
-        "class": "motorway"
-      }
+      "filter": "class == 'motorway'"
     },
     {
       "layer_name": "transportation",
@@ -181,15 +153,11 @@
           "width": 1.0
         }
       },
-      "properties": {
-        "class": "secondary"
-      }
+      "filter": "class == 'secondary'"
     },
     {
       "layer_name": "park",
-      "properties": {
-        "class": "национальный_парк"
-      }
+      "filter": "class == 'национальный_парк'"
     },
     {
       "layer_name": "transportation",
@@ -200,14 +168,10 @@
           "width": 1.5
         }
       },
-      "properties": {
-        "class": "trunk_construction"
-      }
+      "filter": "class == 'trunk_construction'"
     },
     {
-      "properties": {
-        "rank": "1"
-      },
+      "filter": "rank == 1",
       "symbol": {
         "label": {
           "pattern": "{name:en}",
@@ -220,21 +184,30 @@
           }
         }
       }
+    },
+    {
+      "symbol": {
+        "line": {
+          "stroke_color": "#e0e0e0ff",
+          "width": 1.5
+        }
+      }
+    },
+    {
+      "symbol": {
+        "polygon": {
+          "fill_color": "#e0e0e0ff"
+        }
+      }
+    },
+    {
+      "symbol": {
+        "point": {
+          "size": 2.4,
+          "color": "#ff0000ff"
+        }
+      }
     }
   ],
-  "default_symbol": {
-    "line": {
-      "stroke_color": "#e0e0e0ff",
-      "miter_limit": 1,
-      "width": 1.0
-    },
-    "polygon": {
-      "fill_color": "#e0e0e0ff"
-    },
-    "point": {
-      "size": 2.4,
-      "color": "#ff0000ff"
-    }
-  },
   "background": "#fff3e4"
 }

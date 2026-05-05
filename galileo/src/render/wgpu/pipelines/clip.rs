@@ -3,10 +3,10 @@ use wgpu::{
     RenderPipelineDescriptor, StencilFaceState, StencilOperation, StencilState, TextureFormat,
 };
 
+use crate::render::RenderOptions;
 use crate::render::render_bundle::world_set::PolyVertex;
 use crate::render::wgpu::pipelines::{default_pipeline_descriptor, default_targets};
-use crate::render::wgpu::{DisplayInstance, WgpuVertexBuffers, DEPTH_FORMAT};
-use crate::render::RenderOptions;
+use crate::render::wgpu::{DEPTH_FORMAT, DisplayInstance, WgpuVertexBuffers};
 
 pub struct ClipPipeline {
     wgpu_pipeline: RenderPipeline,
@@ -34,14 +34,14 @@ impl ClipPipeline {
         let targets = default_targets(format);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[map_view_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(map_view_layout)],
+            immediate_size: 0,
         });
 
         let depth_stencil = Some(DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: false,
-            depth_compare: CompareFunction::Always,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(CompareFunction::Always),
             stencil: StencilState {
                 front: clip_stencil_state,
                 back: clip_stencil_state,
