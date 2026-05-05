@@ -9,9 +9,7 @@ members = [
 ]
 resolver = "2"
 
-exclude = [
-    "android_examples/raster_tiles/rust",
-]
+exclude = ["android_examples/raster_tiles/rust"]
 
 [profile.release]
 debug = true
@@ -23,7 +21,7 @@ edition = "2024"
 keywords = ["gis", "map", "rendering"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Maximkaaa/galileo"
-version = "0.2.1"
+version = "0.3.0"
 
 [workspace.lints]
 rust.missing_docs = "warn"
@@ -37,8 +35,9 @@ ahash = "0.8"
 anyhow = "1"
 approx = "0.5"
 async-trait = "0.1"
-base64 = "0.21"
-bincode = "2.0.0-rc.3"
+base64 = "0.22"
+bincode = "2" # Don't upgrade to 3, bincode is unmainted
+# wincode = "0.5.3" # TODO: swap to wincode
 csscolorparser = "0.8"
 bitcode = "0.6"
 bytemuck = "1.14"
@@ -58,34 +57,34 @@ font-kit = "0.14"
 font-query = { git = "https://github.com/Maximkaaa/font-query" }
 futures = "0.3"
 futures-intrusive = "0.5"
-galileo = { path = "galileo", version = "0.2.1", default-features = false }
-galileo-egui = { path = "galileo-egui", version = "0.2.1" }
-galileo-mvt = { path = "galileo-mvt", version = "0.2.1" }
-galileo-types = { path = "galileo-types", version = "0.2.1" }
-geodesy = "0.13"
-geojson = "0.24"
-geozero = { version = "0.13", default-features = false }
+galileo = { path = "galileo", version = "0.3.0", default-features = false }
+galileo-egui = { path = "galileo-egui", version = "0.3.0" }
+galileo-mvt = { path = "galileo-mvt", version = "0.3.0" }
+galileo-types = { path = "galileo-types", version = "0.3.0" }
+geodesy = "0.15"
+geojson = "1"
+geozero = { version = "0.15", default-features = false }
 geo-types = "0.7"
-getrandom = "0.3"
-image = { version = "0.24", default-features = false }
+getrandom = "0.4"
+image = { version = "0.25", default-features = false }
 insta = "1.41"
 itertools = "0.14"
 js-sys = "0.3"
-las = "0.8"
+las = "0.9"
 log = "0.4"
 lyon = "1"
 maybe-sync = "0.1"
-nalgebra = "0.32"
+nalgebra = "0.34"
 num-traits = "0.2"
 ordered-float = "5"
-ordered_hash_map = "0.5"
+ordered_hash_map = "0.6"
 parking_lot = "0.12"
-prost = "0.12"
-prost-build = "0.12"
-quick_cache = "0.4"
+prost = "0.14"
+prost-build = "0.14"
+quick_cache = "0.6"
 raw-window-handle = "0.6"
 regex = "1.11"
-reqwest = { version = "0.12", default-features = false }
+reqwest = { version = "0.13", default-features = false }
 rustybuzz = "0.20"
 serde = "1"
 serde-wasm-bindgen = "0.6"
@@ -99,9 +98,15 @@ tokio-test = "0.4"
 # Fix the version of uuid to prevent build breaking
 uuid = "1.17"
 wasm-bindgen = "0.2"
-wasm-bindgen-derive = "0.2"
+wasm-bindgen-derive = "0.3"
 wasm-bindgen-futures = "0.4"
 web-time = "1"
 web-sys = "0.3, <0.3.92"
-wgpu = { version = "29.0.0", default-features = false, features = ["metal", "wgsl", "webgl", "vulkan", "gles"] }
+wgpu = { version = "29.0.0", default-features = false, features = [
+    "metal",
+    "wgsl",
+    "webgl",
+    "vulkan",
+    "gles",
+] }
 winit = { version = "0.30", default-features = false }

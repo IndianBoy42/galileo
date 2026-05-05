@@ -8,13 +8,13 @@ use galileo_types::geometry::Geom;
 use galileo_types::impls::ClosedContour;
 use image::EncodableLayout;
 
+use crate::Color;
 use crate::decoded_image::DecodedImage;
 use crate::error::GalileoError;
 use crate::layer::feature_layer::symbol::Symbol;
 use crate::render::point_paint::{MarkerStyle, PointPaint};
 use crate::render::render_bundle::RenderBundle;
 use crate::view::MapView;
-use crate::Color;
 
 /// Renders a point as a circle of fixes size.
 #[derive(Debug, Copy, Clone)]
@@ -223,7 +223,7 @@ impl ImagePointSymbol {
     pub fn from_path(path: &str, offset: Vector2<f32>, scale: f32) -> Result<Self, GalileoError> {
         use galileo_types::cartesian::Size;
 
-        let image = image::io::Reader::open(path)?
+        let image = image::ImageReader::open(path)?
             .decode()
             .map_err(|_| GalileoError::ImageDecode)?;
 

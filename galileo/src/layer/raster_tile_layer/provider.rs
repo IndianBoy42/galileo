@@ -3,8 +3,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use maybe_sync::{MaybeSend, MaybeSync};
 use parking_lot::Mutex;
-use quick_cache::GuardResult;
-use quick_cache::sync::Cache;
+use quick_cache::sync::{Cache, GuardResult};
 
 use crate::TileSchema;
 use crate::decoded_image::DecodedImage;
@@ -169,7 +168,12 @@ impl RasterTileProvider {
         self.tile_cache.lock().insert(index, TileState::Error);
     }
 
-    pub(crate) fn pack_tiles(&self, indices: &[WrappingTileIndex], canvas: &dyn Canvas, view: &MapView) {
+    pub(crate) fn pack_tiles(
+        &self,
+        indices: &[WrappingTileIndex],
+        canvas: &dyn Canvas,
+        view: &MapView,
+    ) {
         let tiles = self.tile_cache.lock();
         let images = self.tile_images.lock();
         for index in indices {

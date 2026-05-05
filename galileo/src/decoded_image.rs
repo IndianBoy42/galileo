@@ -140,7 +140,7 @@ mod serialization {
                         bytes,
                         dimensions.width(),
                         dimensions.height(),
-                        ColorType::Rgba8,
+                        ColorType::Rgba8.into(),
                     ) {
                         return Err(serde::ser::Error::custom(format!(
                             "failed to encode image to PNG: {err}"
