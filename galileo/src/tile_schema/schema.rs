@@ -66,6 +66,27 @@ pub struct Lod {
 }
 
 impl TileSchema {
+    /// Resolution of the given z-level for a web mercator tile schema with 256px tiles.
+    ///
+    /// Equivalent to `TileSchemaBuilder::web_mercator(z..(z+1)).build().unwrap().lod_resolution(z).unwrap()`
+    /// but computed as a pure const function.
+    ///
+    /// ```
+    /// # use galileo::tile_schema::TileSchema;
+    /// # use galileo::tile_schema::TileSchemaBuilder;
+    /// let n = 17;
+    /// let expected = TileSchemaBuilder::web_mercator(n..(n+1))
+    ///     .build().unwrap()
+    ///     .lod_resolution(n).unwrap();
+    /// assert!((TileSchema::web_mercator_lod_resolution(n) - expected).abs() < 1e-6);
+    /// ```
+    pub const fn web_mercator_lod_resolution(z: u32) -> f64 {
+        const WEB_MERCATOR_TOP_RESOLUTION: f64 =
+            2.0 * 20037508.342787 / 256.0;
+        let divisor = 1u64 << z;
+        WEB_MERCATOR_TOP_RESOLUTION / divisor as f64
+    }
+
     /// Resolution of the given z-level, if exists.
     pub fn lod_resolution(&self, z: u32) -> Option<f64> {
         let resolution = *self.lods.get(z as usize)?;
