@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cartesian::Point2;
 use crate::geo::traits::point::{GeoPoint, NewGeoPoint};
-use crate::geo::traits::projection::Projection;
 use crate::geo::Datum;
-use crate::geometry::{Geom, Geometry};
 use crate::geometry_type::{GeoSpace2d, GeometryType, PointGeometryType};
 
 /// 2d point on the surface of a celestial body.
@@ -83,7 +81,7 @@ impl GeoPoint2d {
         let b = datum.semiminor();
         let f = 1.0 - (b / a); // flattening
 
-        let mut α1 = azimuth.to_radians();
+        let α1 = azimuth.to_radians();
         let sin_α1 = α1.sin();
         let cos_α1 = α1.cos();
 

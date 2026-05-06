@@ -1,4 +1,4 @@
-use geojson::{LineStringType, PolygonType, Position, Value};
+use geojson::{GeometryValue, LineStringType, PolygonType, Position};
 
 use crate::error::GalileoTypesError;
 use crate::geo::impls::GeoPoint2d;
@@ -28,13 +28,13 @@ impl Geometry for geojson::Geometry {
         Proj: Projection<InPoint = Self::Point> + ?Sized,
     {
         match &self.value {
-            Value::Point(p) => GeoPoint2d::try_from(p.clone()).ok()?.project(projection),
-            Value::MultiPoint(points) => convert_multi_point(points)?.project(projection),
-            Value::LineString(points) => convert_contour(points)?.project(projection),
-            Value::MultiLineString(lines) => convert_multi_contour(lines)?.project(projection),
-            Value::Polygon(polygon) => convert_polygon(polygon)?.project(projection),
-            Value::MultiPolygon(mp) => convert_multi_polygon(mp)?.project(projection),
-            Value::GeometryCollection(_) => todo!(),
+            GeometryValue::Point { coordinates: p } => GeoPoint2d::try_from(p.clone()).ok()?.project(projection),
+            GeometryValue::MultiPoint { coordinates: points } => convert_multi_point(points)?.project(projection),
+            GeometryValue::LineString { coordinates: points } => convert_contour(points)?.project(projection),
+            GeometryValue::MultiLineString { coordinates: lines } => convert_multi_contour(lines)?.project(projection),
+            GeometryValue::Polygon { coordinates: polygon } => convert_polygon(polygon)?.project(projection),
+            GeometryValue::MultiPolygon { coordinates: mp } => convert_multi_polygon(mp)?.project(projection),
+            GeometryValue::GeometryCollection { geometries: _ } => todo!(),
         }
     }
 }
