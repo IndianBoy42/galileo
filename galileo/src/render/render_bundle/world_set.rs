@@ -60,6 +60,7 @@ pub struct ShapeArguments<'a> {
     outline: Option<LinePaint<'a>>,
     shape: &'a ClosedContour<Point2<f32>>,
     offset: Vector2<f32>,
+    #[allow(dead_code)]
     rotation: f32,
 }
 

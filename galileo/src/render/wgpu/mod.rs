@@ -8,7 +8,7 @@ use std::time::Duration;
 use ahash::HashMap;
 use cfg_if::cfg_if;
 use effects::horizon::HorizonPipeline;
-use galileo_types::cartesian::{Point3, Rect, Size, Vector2};
+use galileo_types::cartesian::{Rect, Size, Vector2};
 use lyon::tessellation::VertexBuffers;
 use nalgebra::{Point4, Rotation3, Vector3};
 use parking_lot::Mutex;

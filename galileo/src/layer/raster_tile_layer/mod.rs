@@ -3,7 +3,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use galileo_types::cartesian::{CartesianPoint2d, Vector2};
+use galileo_types::cartesian::Vector2;
 use provider::RasterTileProvider;
 use web_time::Duration;
 

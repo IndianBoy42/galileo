@@ -34,6 +34,7 @@ pub(super) enum UpdateType {
 }
 
 impl UpdateType {
+    #[allow(dead_code)]
     pub fn upgrade(&mut self, other: UpdateType) {
         match (&mut *self, other) {
             (UpdateType::None, other) => {

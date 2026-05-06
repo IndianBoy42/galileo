@@ -1,7 +1,5 @@
 //! [`RenderBundle`] is used to store primitives and prepare them for rendering with the rendering backend.
 
-use std::sync::Arc;
-
 use galileo_types::Polygon;
 use galileo_types::cartesian::{CartesianPoint3d, Point2, Vector2};
 use galileo_types::contour::Contour;
