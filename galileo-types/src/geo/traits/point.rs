@@ -27,13 +27,17 @@ pub trait GeoPoint {
     }
 }
 
+/// Extension methods for [`GeoPoint`] providing distance calculations and normalized differences.
 pub trait GeoPointExt: GeoPoint {
+    /// Returns the normalized coordinate difference between this point and another, accounting
+    /// for longitude convergence at higher latitudes.
     fn difference_normalized<G: GeoPoint<Num = Self::Num>>(&self, other: &G) -> Vector2<Self::Num> {
         Vector2::new(
             self.lat() - other.lat(),
             self.lon() - other.lon() * other.lat().to_radians().cos(),
         )
     }
+    /// Calculates the great-circle distance in meters between two geo points using the haversine formula.
     fn distance<G: GeoPoint<Num = Self::Num>>(&self, other: &G) -> f64 {
         const EARTH_RADIUS: f64 = 6371008.8; // WGS84 mean radius in meters
 
@@ -50,6 +54,8 @@ pub trait GeoPointExt: GeoPoint {
 
         c * EARTH_RADIUS
     }
+    /// Calculates the distance in meters between two geo points using Vincenty's formula on the
+    /// specified datum ellipsoid for higher accuracy over long distances.
     fn distance_accurate<G: GeoPoint<Num = Self::Num>>(&self, other: &G, datum: &Datum) -> f64 {
         let smaj = datum.semimajor();
         let smin = datum.semiminor();

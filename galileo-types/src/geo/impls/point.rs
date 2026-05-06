@@ -142,6 +142,8 @@ impl GeoPoint2d {
         self.offset(dx, dy)
     }
 
+    /// Move the point by a distance in meters in the direction of the given heading (degrees
+    /// clockwise from North), using the provided datum for accurate ellipsoid calculations.
     pub fn offset_polar_accurate(self, distance: f64, heading: f64, datum: &Datum) -> Self {
         // TODO: direct method
         let heading_rad = heading.to_radians();

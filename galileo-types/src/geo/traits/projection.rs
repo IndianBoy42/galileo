@@ -19,13 +19,16 @@ pub trait Projection {
     }
 }
 
+/// Convenience trait providing methods to project and unproject points through any [`Projection`].
 pub trait Project: Sized {
+    /// Projects this point through the given projection.
     fn projected<P>(&self, projection: &P) -> Option<P::OutPoint>
     where
         P: Projection<InPoint = Self>,
     {
         projection.project(self)
     }
+    /// Unprojects this point through the given projection (reverse direction).
     fn unprojected<P>(&self, projection: &P) -> Option<P::InPoint>
     where
         P: Projection<OutPoint = Self>,

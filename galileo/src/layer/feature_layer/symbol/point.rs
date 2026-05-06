@@ -158,6 +158,7 @@ impl<F> Symbol<F> for ArrowPointSymbol {
 }
 
 impl ArrowPointSymbol {
+    /// Creates a new arrow symbol with the given color, size, line width, and arrowhead length.
     pub fn new(color: Color, size: f64, width: f32, length: f32) -> Self {
         Self {
             color,

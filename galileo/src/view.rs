@@ -90,6 +90,7 @@ impl MapView {
         })
     }
 
+    /// Returns the projected position of the map center, or `None` if not set.
     pub fn projected_center(&self) -> Option<Point3<f64>> {
         self.projected_position
     }
@@ -474,6 +475,7 @@ impl MapView {
         }
     }
 
+    /// Zooms the view by the given factor, keeping the specified screen-space `base_point` fixed.
     pub fn zoom(&self, zoom: f64, base_point: Point2) -> Self {
         let base_point = self.screen_to_map(base_point);
         let resolution = self.resolution * zoom;
@@ -494,6 +496,7 @@ impl MapView {
         }
     }
 
+    /// Linearly interpolates between this view and `target` by factor `k` (0.0 = this, 1.0 = target).
     pub fn interpolate(&self, target: &MapView, k: f64) -> Self {
         let Some(source_position) = self.projected_position else {
             return self.clone();

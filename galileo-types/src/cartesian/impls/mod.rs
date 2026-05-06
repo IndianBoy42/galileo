@@ -126,6 +126,7 @@ where
         self.dx * other.dx + self.dy * other.dy
     }
 
+    /// Returns the 2D cross product (scalar perpendicular component) of this vector and another.
     pub fn cross(&self, other: Vector2<Num>) -> Num {
         self.dx * other.dy - self.dy * other.dx
     }
@@ -244,10 +245,12 @@ impl<Num> Point3<Num> {
         Self { x, y, z }
     }
 
+    /// Converts the point to an array of `[x, y, z]`.
     pub fn array(self) -> [Num; 3] {
         [self.x, self.y, self.z]
     }
 
+    /// Drops the Z coordinate and returns a 2D point.
     pub const fn point2(&self) -> Point2<Num>
     where
         Num: Copy,
@@ -257,12 +260,14 @@ impl<Num> Point3<Num> {
 }
 
 impl Point3<f64> {
+    /// Returns the origin point `(0, 0, 0)` for `f64` coordinates.
     pub const fn origin() -> Self {
         Self::new(0.0, 0.0, 0.0)
     }
 }
 
 impl Point3<f32> {
+    /// Returns the origin point `(0, 0, 0)` for `f32` coordinates.
     pub const fn origin() -> Self {
         Self::new(0.0, 0.0, 0.0)
     }

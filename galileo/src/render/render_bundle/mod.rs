@@ -120,6 +120,7 @@ impl RenderBundle {
         self.world_set
             .add_label(position, text, style, offset, view);
     }
+    /// Adds a screen-space text label at the given projected position.
     pub fn add_label<N, P>(
         &mut self,
         position: &P,

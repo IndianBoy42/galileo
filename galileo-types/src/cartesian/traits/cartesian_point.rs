@@ -92,6 +92,7 @@ pub trait NewCartesianPoint2d<Num = f64>: CartesianPoint2d<Num = Num> {
     /// Creates a new point with the given coordinates.
     fn new(x: Num, y: Num) -> Self;
 
+    /// Creates a new point from an existing 2D point.
     fn from_pt<T>(pt: &T) -> Self
     where
         T: CartesianPoint2d<Num = Num>,
@@ -106,6 +107,7 @@ pub trait NewCartesianPoint3d<Num = f64>: CartesianPoint3d<Num = Num> {
     /// Creates a new point with the given coordinates.
     fn new(x: Num, y: Num, z: Num) -> Self;
 
+    /// Creates a new point from an existing 3D point.
     fn from_pt<T>(pt: &T) -> Self
     where
         T: CartesianPoint3d<Num = Num>,

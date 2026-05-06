@@ -38,6 +38,8 @@ impl Datum {
         self.semiminor
     }
 
+    /// Calculates the accurate distance in meters between two geo points using Vincenty's formula
+    /// with this datum's ellipsoid parameters.
     pub fn distance<A, B>(&self, a: &A, b: &B) -> f64
     where
         A: GeoPoint,
